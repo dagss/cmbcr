@@ -2,4 +2,4 @@
 *.so
 *.pyc
 *.mod
-
+/config/config.default
