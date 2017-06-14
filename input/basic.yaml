@@ -1,0 +1,29 @@
+model:
+  
+
+
+
+datasets:
+  - name: planck_hfi
+    path: /store/dagss/planckdata/32band
+    map_template: map_dx11d_r2t_zc_{band}_2048_fullres_full.fits
+    rms_template: rms_dx11d_r2t_{band}_2048_fullres_full.fits
+    beam_template: beam_dx11d2_uni_{band}_x_{band}.fits
+
+    bands:
+      - '857-2'
+#      - '545-2'
+#      - '217-1'
+#      - '143-ds1'
+      - '100-ds1'
+
+  - name: planck_lfi
+    path: /store/dagss/planckdata/32band
+    map_template: map_dx11d_r2t_zc_{band}_1024_fullres_full.fits
+    rms_template: rms_dx11d_r2t_{band}_1024_fullres_full.fits
+    beam_template: beam_dx11d2_uni_{band}.fits
+
+    bands:
+      - '030'
+#      - 044
+      - '070-18_23'
