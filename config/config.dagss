@@ -1,5 +1,7 @@
 LAPACK = /home/dagss/astro/OpenBLAS/libopenblas_haswell-r0.2.19.a
 SHARP = -L/home/dagss/astro/libsharp/auto/lib -lsharp -lfftpack -lc_utils
 
+SHARP_INCLUDES = -I/home/dagss/astro/libsharp/auto/include
+
 CFLAGS = -fPIC -O2 -march=native
 FCFLAGS = -fPIC -fopenmp -march=native -g -O3 -Wall -fcheck=bounds -fcheck=do -fcheck=mem -fcheck=recursion

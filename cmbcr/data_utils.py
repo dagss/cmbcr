@@ -2,6 +2,18 @@ import healpy
 import numpy as np
 import pyfits
 
+def load_beam(path, dtype=np.double):
+    import pyfits
+    f = pyfits.open(path)
+    try:
+        if len(f) != 2:
+            raise ValueError('Unexpected FITS data for beam')
+        beam = f[1].data.field(0).astype(dtype)
+    finally:
+        f.close()
+    return beam
+
+
 def load_map(map_type, filename, field=0, units_in_file=None, extno=1,
              dtype=np.double):
     """
