@@ -45,7 +45,7 @@ class HarmonicPrior(object):
         amplitude = 1. / system.ni_approx_by_comp_lst[k][self.lcross]
         Cl = amplitude * (l / (self.lcross + 1))**self.beta
         return Cl
-        
+
 
 class CrSystem(object):
     def __init__(self, ninv_maps, bl_list, mixing_maps, prior_list):
@@ -82,10 +82,10 @@ class CrSystem(object):
         self.lmax_mixed = self.lmax_mixing_pix = max(self.lmax_list)
         self.lmax_ninv = lmax_ninv
         self.rot_ang = rot_ang
-        
+
     def prepare(self):
         # Make G-L ninv-maps, possibly rotated
-        
+
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
         for ninv_map in self.ninv_maps:
@@ -93,15 +93,24 @@ class CrSystem(object):
             self.winv_ninv_sh_lst.append(winv_ninv_sh)
             self.ninv_gauss_lst.append(ninv_gauss)
 
-        self.mixing_scalars = {}
+        self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
+        for nu in range(self.band_count):
+            for k in range(self.comp_count):
+                self.mixing_scalars[nu, k] = self.mixing_maps[nu, k].mean()
+
+        # Rescale prior vs. mixing_scalars and mixing_maps_ugrade and mixing_maps to avoid some numerical issues
+        # We adjust mixing_scalars in-place. self.mixing_maps is kept as is but all derived quantities
+        # computed in this routine are changed
+        self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
+
+        self.mixing_scalars *= self.component_scale[None, :]
         self.mixing_maps_ugrade = {}
         for nu in range(self.band_count):
             for k in range(self.comp_count):
                 with timed('mixing'):
-                    self.mixing_scalars[nu, k] = self.mixing_maps[nu, k].mean()
                     self.mixing_maps_ugrade[nu, k] = rotate_mixing(
-                        self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
-                
+                        self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang) * self.component_scale[k]
+
         self.plan_outer_lst = [
             sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, lmax)
             for lmax in self.lmax_list]
@@ -120,7 +129,8 @@ class CrSystem(object):
         # Prepare prior
         self.dl_list = []
         for k in range(self.comp_count):
-            self.dl_list.append(1 / self.prior_list[k].get_cl(self, k))
+            self.dl_list.append(self.component_scale[k]**2 / self.prior_list[k].get_cl(self, k))
+
 
 
     def matvec(self, x_lst):
@@ -153,7 +163,7 @@ class CrSystem(object):
         return z_lst
 
 
-        
+
     @classmethod
     def from_config(cls, config_doc):
         ninv_maps = []
@@ -182,7 +192,7 @@ class CrSystem(object):
 
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
-                    
+
                 nu += 1
 
         for component in config_doc['model']['components']:
@@ -197,11 +207,10 @@ class CrSystem(object):
     def plot(self):
         from matplotlib import pyplot as plt
         plt.clf()
-        system.prepare()
-        for k in range(system.comp_count):
-            plt.semilogy(system.dl_list[k], 'k-')
-            plt.semilogy(system.ni_approx_by_comp_lst[k], 'r-')
-        plt.draw()        
+        for k in range(self.comp_count):
+            plt.semilogy(self.dl_list[k], 'k-')
+            plt.semilogy(self.ni_approx_by_comp_lst[k], 'r-')
+        plt.draw()
 
 
 def downgrade_system(system, fraction):
@@ -214,7 +223,7 @@ def downgrade_system(system, fraction):
         sigma = -2*np.log(bl[l]) / (l * (l + 1.))
 
         ls = np.arange(int(bl.shape[0] * fraction + 1), dtype=np.double)
-        
+
         new_bl_list.append(np.exp(-0.5 * ls * (ls + 1) * (sigma / fraction)))
 
     new_prior_list = []
@@ -224,5 +233,5 @@ def downgrade_system(system, fraction):
             lcross=int(prior.lcross * fraction + 1),
             lmax=int(prior.lmax * fraction + 1),
             ))
-        
+
     return system.copy_with(bl_list=new_bl_list, prior_list=new_prior_list)

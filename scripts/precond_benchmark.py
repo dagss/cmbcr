@@ -15,6 +15,7 @@ reload(cmbcr.precond_sh)
 reload(cmbcr.utils)
 reload(cmbcr)
 from cmbcr.utils import *
+
 #reload(cmbcr.main)
 
 from cmbcr.cg import cg_generator
@@ -24,7 +25,7 @@ from cmbcr.cg import cg_generator
 config = cmbcr.load_config_file('input/basic.yaml')
 
 system = cmbcr.CrSystem.from_config(config)
-system = cmbcr.downgrade_system(system, 0.1)
+system = cmbcr.downgrade_system(system, 0.04)
 
 print system.lmax_list
 
@@ -45,8 +46,8 @@ reslst = []
 rng = np.random.RandomState(1)
 
 x0 = [
-    rng.normal(size=(lmax + 1)**2).astype(np.float64)
-    for lmax in system.lmax_list
+    cmbcr.scatter_l_to_lm(system.dl_list[k]) * rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
+    for k in range(system.comp_count)
     ]
 b = system.matvec(x0)
 x0_stacked = system.stack(x0)
