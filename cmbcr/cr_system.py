@@ -11,6 +11,8 @@ from .rotate_alm import rotate_alm
 from .mmajor import scatter_l_to_lm
 from . import sharp
 from .utils import timed
+from .healpix import nside_of
+
 
 load_map_cached = cached(lambda filename: load_map('raw', filename))
 load_beam_cached = cached(load_beam)
@@ -39,12 +41,15 @@ class HarmonicPrior(object):
         self.lcross = lcross
         self.lmax = lmax
 
-    def get_cl(self, system, k):
+    def get_dl(self, system, k):
         l = np.arange(1, self.lmax + 2, dtype=np.float)
 
         amplitude = 1. / system.ni_approx_by_comp_lst[k][self.lcross]
         Cl = amplitude * (l / (self.lcross + 1))**self.beta
-        return Cl
+        dl = 1 / Cl
+        if self.beta == 0:
+            dl *= 0
+        return dl
 
 
 class CrSystem(object):
@@ -78,20 +83,24 @@ class CrSystem(object):
         self_kw.update(**kw)
         return CrSystem(**self_kw)
 
-    def set_params(self, lmax_ninv, rot_ang):
+    def set_params(self, lmax_ninv, rot_ang, flat_mixing):
         self.lmax_mixed = self.lmax_mixing_pix = max(self.lmax_list)
         self.lmax_ninv = lmax_ninv
         self.rot_ang = rot_ang
+        self.flat_mixing = flat_mixing
 
-    def prepare(self):
+    def prepare(self, use_healpix=False):
         # Make G-L ninv-maps, possibly rotated
-
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
-        for ninv_map in self.ninv_maps:
-            winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
-            self.winv_ninv_sh_lst.append(winv_ninv_sh)
-            self.ninv_gauss_lst.append(ninv_gauss)
+        if use_healpix:
+            self.plan_ninv = None
+        else:
+            for ninv_map in self.ninv_maps:
+                winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
+                self.winv_ninv_sh_lst.append(winv_ninv_sh)
+                self.ninv_gauss_lst.append(ninv_gauss)
+            self.plan_ninv = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_mixed)
 
         self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
         for nu in range(self.band_count):
@@ -103,21 +112,25 @@ class CrSystem(object):
         # computed in this routine are changed
         self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
 
+
         self.mixing_scalars *= self.component_scale[None, :]
+        print np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal()
         self.mixing_maps_ugrade = {}
         for nu in range(self.band_count):
             for k in range(self.comp_count):
                 with timed('mixing'):
                     self.mixing_maps_ugrade[nu, k] = rotate_mixing(
                         self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang) * self.component_scale[k]
+                    if self.flat_mixing:
+                        self.mixing_maps_ugrade[nu, k][:] = self.mixing_maps_ugrade[nu, k].mean()
 
         self.plan_outer_lst = [
             sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, lmax)
             for lmax in self.lmax_list]
         self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
-        self.plan_ninv = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_mixed)
 
-        # Estimates of Ni level for prior construction in demos
+        # Estimates of Ni level for prior construction in demos; *note* that we *include* component_scale
+        # here...
         self.ni_approx_by_comp_lst = []
         for k in range(self.comp_count):
             ni_approx = 0
@@ -129,7 +142,7 @@ class CrSystem(object):
         # Prepare prior
         self.dl_list = []
         for k in range(self.comp_count):
-            self.dl_list.append(self.component_scale[k]**2 / self.prior_list[k].get_cl(self, k))
+            self.dl_list.append(self.prior_list[k].get_dl(self, k))
 
 
 
@@ -147,9 +160,15 @@ class CrSystem(object):
             # Instrumental beam
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
             # Inverse noise weighting
-            u = self.plan_ninv.synthesis(y)
-            u *= self.ninv_gauss_lst[nu]
-            y = self.plan_ninv.adjoint_synthesis(u)
+            if self.plan_ninv:
+                # guass-legendre mode
+                u = self.plan_ninv.synthesis(y)
+                u *= self.ninv_gauss_lst[nu]
+                y = self.plan_ninv.adjoint_synthesis(u)
+            else:
+                u = sharp.sh_synthesis(nside_of(self.ninv_maps[nu]), y)
+                u *= self.ninv_maps[nu]
+                y = sharp.sh_adjoint_synthesis(self.lmax_mixed, u)
             # Transpose our way out, accumulate result in z_list[icomp];
             # note that z_list will get result from all bands
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
@@ -192,6 +211,7 @@ class CrSystem(object):
 
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
+                    #mixing_maps[nu, k][:] = mixing_maps[nu, k].mean()
 
                 nu += 1
 

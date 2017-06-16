@@ -5,34 +5,9 @@ from .harmonic_preconditioner import factor_banded_preconditioner
 from .harmonic_preconditioner import solve_banded_preconditioner
 from .harmonic_preconditioner import construct_banded_preconditioner
 from .harmonic_preconditioner import k_kp_idx
-from .utils import pad_or_trunc, timed
-from .mmajor import lmax_of, scatter_l_to_lm
+from .utils import pad_or_trunc, timed, pad_or_truncate_alm
 
 __all__ = ['BandedHarmonicPreconditioner']
-
-
-def truncate_alm(alm, lmax_from, lmax_to):
-    s = np.zeros(lmax_from + 1)
-    s[:lmax_to + 1] = 1
-    return alm[scatter_l_to_lm(s) == 1]
-
-
-def pad_alm(alm, lmax_from, lmax_to, fillval=0):
-    out = np.ones((lmax_to + 1)**2) * fillval
-    s = np.zeros(lmax_to + 1)
-    s[:lmax_from + 1] = 1
-    out[scatter_l_to_lm(s) == 1] = alm
-    return out
-
-def pad_or_truncate_alm(alm, to_lmax, fillval=0):
-    alm = alm.copy()
-    from_lmax = lmax_of(alm)
-    if to_lmax == from_lmax:
-        return alm
-    elif to_lmax < from_lmax:
-        return truncate_alm(alm, from_lmax, to_lmax)
-    else:
-        return pad_alm(alm, from_lmax, to_lmax, fillval=fillval)
 
 
 class BandedHarmonicPreconditioner(object):
