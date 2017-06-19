@@ -4,25 +4,25 @@ model:
 
   components:
     - name: cmb
-      lmax: 3000
+      lmax: 2000
       mixmat: '06'
       prior:
-        beta: 0
-        lcross: 2000
+        beta: 0 # -1.5
+        lcross: 1600
 
-    #- name: dust
-    #  lmax: 4000
-    #  mixmat: '01'
-    #  prior:
-    #    beta: -1.5
-    #    lcross: 3000
+#    - name: dust
+#      lmax: 4000
+#      mixmat: '01'
+#      prior:
+#        beta: -1.5
+#        lcross: 3000
 
     #- name: synch
-    #  lmax: 700
+    #  lmax: 500
     #  mixmat: '02'
     #  prior:
-    #    beta: -1.5
-    #    lcross: 500
+    #    beta: 0 #-1.5
+    #    lcross: 300
 
 
 datasets:
@@ -36,8 +36,8 @@ datasets:
 
       - name: '100-ds1'
         mixmat: '16'
-    #  - name: '857-2'
-    #    mixmat: '01'
+#      - name: '857-2'
+#        mixmat: '01'
 
 
   - name: planck_lfi
@@ -46,14 +46,13 @@ datasets:
     rms_template: rms_dx11d_r2t_{band[name]}_1024_fullres_full.fits
     beam_template: beam_dx11d2_uni_{band[name]}.fits
 
-    bands: []
-#    bands:
+    bands:
 #      - name: '030'
 #        mixmat: '17'
 
 #      - name: '044'
 #        mixmat: '18'
 
-#      - name: '070-18_23'
-#        mixmat: '19'
+      - name: '070-18_23'
+        mixmat: '19'
 

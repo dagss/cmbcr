@@ -4,3 +4,4 @@
 *.pyc
 *.mod
 /config/config.default
+/results

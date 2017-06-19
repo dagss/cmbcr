@@ -58,8 +58,12 @@ def lstmul(a, b):
 def lstadd(a, b):
     return [ax + bx for ax, bx in zip(a, b)]
 
+def lstsub(a, b):
+    return [ax - bx for ax, bx in zip(a, b)]
+
+
 class PsuedoInversePreconditioner(object):
-    def __init__(self, system, hi_l_precond):
+    def __init__(self, system, hi_l_precond, mg=False):
         self.system = system
         self.P = create_mixing_matrix(system)
         self.Pi = invert_block_diagonal(self.P)
@@ -80,27 +84,34 @@ class PsuedoInversePreconditioner(object):
 
         def make_filter(k):
             lfilter = np.ones(system.lmax_list[k] + 1)
-            lfilter[system.prior_list[k].lcross - 1:] = 0
-            lfilter[:] = 1
+            lfilter[system.prior_list[k].lcross:] = 0
             return scatter_l_to_lm(lfilter)
 
         self.lo_filters = [make_filter(k) for k in range(system.comp_count)]
         self.hi_filters = [1 - f for f in self.lo_filters]
+        self.mg = mg
 
-    def apply(self, x_lst):
+    def apply(self, b_lst):
+        if self.mg:
+            x_lst = self.hi_l_precond.apply(b_lst)
+            
+            r_lst = lstsub(b_lst, self.system.matvec(x_lst))
+            x_lst = lstadd(x_lst, self.apply_psuedo_inverse(r_lst))
+            
+            r_lst = lstsub(b_lst, self.system.matvec(x_lst))
+            x_lst = lstadd(x_lst, self.hi_l_precond.apply(r_lst))
+            
+            return x_lst
+        else:
+            M_hi_b = lstmul(self.hi_filters, self.hi_l_precond.apply(lstmul(self.hi_filters, b_lst)))
+            M_lo_b = lstmul(self.lo_filters, self.apply_psuedo_inverse(lstmul(self.lo_filters, b_lst)))
+            return lstadd(M_hi_b, M_lo_b)
 
-        M_hi_x = lstmul(self.hi_filters, self.hi_l_precond.apply(lstmul(self.hi_filters, x_lst)))
-
-        x_lst = lstmul(self.lo_filters, x_lst)
+    def apply_psuedo_inverse(self, x_lst):
         x_lst = apply_block_diagonal(self.system, self.Pi, x_lst, transpose=True)
-
         c_h = []
         for nu in range(self.system.band_count):
             r_H = self.plans[nu].adjoint_analysis(x_lst[nu])
             r_H *= self.inv_inv_maps[nu]
             c_h.append(self.plans[nu].analysis(r_H))
-
-        M_lo_x = apply_block_diagonal(self.system, self.Pi, c_h)
-
-        M_lo_x = lstmul(self.lo_filters, M_lo_x)
-        return lstadd(M_hi_x, M_lo_x)
+        return apply_block_diagonal(self.system, self.Pi, c_h)

@@ -89,6 +89,27 @@ class CrSystem(object):
         self.rot_ang = rot_ang
         self.flat_mixing = flat_mixing
 
+    def prepare_prior(self):
+        self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
+        for nu in range(self.band_count):
+            for k in range(self.comp_count):
+                self.mixing_scalars[nu, k] = self.mixing_maps[nu, k].mean()
+
+        # Estimates of Ni level for prior construction in demos; *note* that we *include* component_scale
+        # here...
+        self.ni_approx_by_comp_lst = []
+        for k in range(self.comp_count):
+            ni_approx = 0
+            for nu in range(self.band_count):
+                tau = self.ninv_maps[nu].mean() * self.ninv_maps[nu].shape[0] / (4 * np.pi)
+                ni_approx += self.mixing_scalars[nu, k]**2 * tau * self.bl_list[nu][:self.lmax_list[k] + 1]**2
+            self.ni_approx_by_comp_lst.append(ni_approx)
+        # Prepare prior
+        self.dl_list = []
+        for k in range(self.comp_count):
+            self.dl_list.append(self.prior_list[k].get_dl(self, k))
+
+
     def prepare(self, use_healpix=False):
         # Make G-L ninv-maps, possibly rotated
         self.ninv_gauss_lst = []
@@ -102,19 +123,18 @@ class CrSystem(object):
                 self.ninv_gauss_lst.append(ninv_gauss)
             self.plan_ninv = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_mixed)
 
-        self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
-        for nu in range(self.band_count):
-            for k in range(self.comp_count):
-                self.mixing_scalars[nu, k] = self.mixing_maps[nu, k].mean()
 
         # Rescale prior vs. mixing_scalars and mixing_maps_ugrade and mixing_maps to avoid some numerical issues
         # We adjust mixing_scalars in-place. self.mixing_maps is kept as is but all derived quantities
         # computed in this routine are changed
         self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
-
-
+        #self.component_scale = self.component_scale * 0 + 1
+        #self.component_scale = np.array([1., 1e6])
         self.mixing_scalars *= self.component_scale[None, :]
-        print np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal()
+        for k in range(self.comp_count):
+            self.dl_list[k] *= self.component_scale[k]**2
+            self.ni_approx_by_comp_lst[k] *= self.component_scale[k]**2
+
         self.mixing_maps_ugrade = {}
         for nu in range(self.band_count):
             for k in range(self.comp_count):
@@ -129,20 +149,6 @@ class CrSystem(object):
             for lmax in self.lmax_list]
         self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
 
-        # Estimates of Ni level for prior construction in demos; *note* that we *include* component_scale
-        # here...
-        self.ni_approx_by_comp_lst = []
-        for k in range(self.comp_count):
-            ni_approx = 0
-            for nu in range(self.band_count):
-                tau = self.ninv_maps[nu].mean() * self.ninv_maps[nu].shape[0] / (4 * np.pi)
-                ni_approx += self.mixing_scalars[nu, k]**2 * tau * self.bl_list[nu][:self.lmax_list[k] + 1]**2
-            self.ni_approx_by_comp_lst.append(ni_approx)
-
-        # Prepare prior
-        self.dl_list = []
-        for k in range(self.comp_count):
-            self.dl_list.append(self.prior_list[k].get_dl(self, k))
 
 
 
@@ -211,7 +217,7 @@ class CrSystem(object):
 
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
-                    #mixing_maps[nu, k][:] = mixing_maps[nu, k].mean()
+                    mixing_maps[nu, k][:] = mixing_maps[nu, k].mean()
 
                 nu += 1
 
@@ -224,12 +230,13 @@ class CrSystem(object):
 
         return cls(ninv_maps=ninv_maps, bl_list=bl_list, mixing_maps=mixing_maps, prior_list=prior_list)
 
-    def plot(self):
+    def plot(self, lmax=None):
         from matplotlib import pyplot as plt
-        plt.clf()
+        #plt.clf()
         for k in range(self.comp_count):
-            plt.semilogy(self.dl_list[k], 'k-')
-            plt.semilogy(self.ni_approx_by_comp_lst[k], 'r-')
+            L = lmax or self.lmax_list[k]
+            plt.semilogy(self.dl_list[k][:L + 1], 'k-')
+            plt.semilogy(self.ni_approx_by_comp_lst[k][:L + 1], 'r-')
         plt.draw()
 
 
@@ -244,7 +251,7 @@ def downgrade_system(system, fraction):
 
         ls = np.arange(int(bl.shape[0] * fraction + 1), dtype=np.double)
 
-        new_bl_list.append(np.exp(-0.5 * ls * (ls + 1) * (sigma / fraction)))
+        new_bl_list.append(np.exp(-0.5 * ls * (ls + 1) * (sigma / fraction**2)))
 
     new_prior_list = []
     for prior in system.prior_list:
