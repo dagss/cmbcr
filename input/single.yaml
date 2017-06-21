@@ -1,0 +1,54 @@
+
+model:
+  mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
+
+  components:
+    - name: cmb
+      lmax: 3000
+      mixmat: '06'
+      prior:
+        beta: -1.5  #-1.5
+        lcross: 3000
+
+
+datasets:
+  - name: planck_hfi
+    path: /store/dagss/planckdata/32band
+    map_template: map_dx11d_r2t_zc_{band[name]}_2048_fullres_full.fits
+    rms_template: rms_dx11d_r2t_{band[name]}_2048_fullres_full.fits
+    beam_template: beam_dx11d2_uni_{band[name]}_x_{band[name]}.fits
+
+
+    bands:
+      - name: '100-ds1'
+        mixmat: '16'
+        
+      - name: '143-ds1'
+        mixmat: '10'
+        
+      - name: '217-4'
+        mixmat: '09'
+        
+      - name: '353-2'
+        mixmat: '05'
+        
+      - name: '857-2'
+        mixmat: '01'
+
+
+  - name: planck_lfi
+    path: /store/dagss/planckdata/32band
+    map_template: map_dx11d_r2t_zc_{band[name]}_1024_fullres_full.fits
+    rms_template: rms_dx11d_r2t_{band[name]}_1024_fullres_full.fits
+    beam_template: beam_dx11d2_uni_{band[name]}.fits
+
+    bands:
+      - name: '030'
+        mixmat: '17'
+
+      - name: '044'
+        mixmat: '18'
+
+      - name: '070-18_23'
+        mixmat: '19'
+

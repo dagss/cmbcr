@@ -29,14 +29,15 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 full_res_system = cmbcr.CrSystem.from_config(config)
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.03)
+system = cmbcr.downgrade_system(full_res_system, 0.1)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
 #system.plot(lmax=200)
 #1/0
 
-print system.lmax_list
+#print system.lmax_list
+#1/0
 lmax_ninv = 2 * max(system.lmax_list)
 rot_ang = (-1.71526923, -0.97844199, -0.03666168)
 
@@ -63,7 +64,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=40):
+    def __init__(self, label, style, preconditioner, n=100):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -87,9 +88,10 @@ class Benchmark(object):
                 r0 = np.linalg.norm(r)
 
             self.err_vecs.append([x0c - xc for x0c, xc in zip(x0, system.unstack(x))])
-            self.err_norms.append(np.linalg.norm(x - x0_stacked) / np.linalg.norm(x0_stacked))
+            err = np.linalg.norm(x - x0_stacked) / np.linalg.norm(x0_stacked)
+            self.err_norms.append(err)
             self.reslst.append(np.linalg.norm(r) / r0)
-            if i >= n:
+            if err < 1e-13 or i >= n:
                 break
 
         
@@ -174,6 +176,14 @@ benchmarks = [
 #        '-o',
 #        cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)),
     
+    Benchmark(
+        'Psuedo-inverse',
+        '-o',
+        cmbcr.BlockPreconditioner(
+            system,
+            cmbcr.PsuedoInversePreconditioner(system),
+            diag_precond_nocouplings,
+        )),
         
     ]
 
@@ -184,14 +194,6 @@ if sys.argv[1] == 'single':
             '-o',
             cmbcr.PixelPreconditioner(system, prior=False),
         ),
-        Benchmark(
-            'Psuedo-inverse',
-            '-o',
-            cmbcr.BlockPreconditioner(
-                system,
-                cmbcr.PsuedoInversePreconditioner(system),
-                diag_precond_nocouplings,
-            )),
     ])
     
     

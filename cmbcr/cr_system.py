@@ -120,21 +120,37 @@ class CrSystem(object):
         # Make G-L ninv-maps, possibly rotated
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
+
+        # We rescale ninv-maps so that they become as close to identity as possible
+        self.ninv_scale = []
+
         if use_healpix:
+            assert False ## not tested any longer, dead code path, probably doesn't work
             self.plan_ninv = None
         else:
-            for ninv_map in self.ninv_maps:
+            for nu, ninv_map in enumerate(self.ninv_maps):
                 winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
+
+                # Rescale to make N^{-1} as close as possible to identity matrix
+                alpha = ninv_map.sum() / (ninv_map**2).sum()
+
+                ninv_gauss *= alpha
+                self.ninv_scale.append(np.sqrt(1. / alpha))
                 self.winv_ninv_sh_lst.append(winv_ninv_sh)
                 self.ninv_gauss_lst.append(ninv_gauss)
             self.plan_ninv = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_mixed)
+
+        self.ninv_scale = np.asarray(self.ninv_scale)
+        self.mixing_scalars *= self.ninv_scale[:, None]  # also, put into mixing_maps_ugrade below
 
 
         # Rescale prior vs. mixing_scalars and mixing_maps_ugrade and mixing_maps to avoid some numerical issues
         # We adjust mixing_scalars in-place. self.mixing_maps is kept as is but all derived quantities
         # computed in this routine are changed
         ## self.component_scale = np.ones(self.comp_count) # DEBUG
+
         self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
+
         self.mixing_scalars *= self.component_scale[None, :]
         for k in range(self.comp_count):
             self.dl_list[k] *= self.component_scale[k]**2
@@ -144,8 +160,10 @@ class CrSystem(object):
         for nu in range(self.band_count):
             for k in range(self.comp_count):
                 with timed('mixing'):
-                    self.mixing_maps_ugrade[nu, k] = rotate_mixing(
-                        self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang) * self.component_scale[k]
+                    self.mixing_maps_ugrade[nu, k] = (
+                        rotate_mixing(self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
+                        * self.component_scale[k]
+                        * self.ninv_scale[nu])
                     if self.flat_mixing:
                         self.mixing_maps_ugrade[nu, k][:] = self.mixing_maps_ugrade[nu, k].mean()
 
@@ -226,7 +244,7 @@ class CrSystem(object):
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
-                    mixing_maps[nu, k][:] = mixing_maps[nu, k].mean() ## DEBUG
+                    ##mixing_maps[nu, k][:] = mixing_maps[nu, k].mean() ## DEBUG
 
                 nu += 1
 
