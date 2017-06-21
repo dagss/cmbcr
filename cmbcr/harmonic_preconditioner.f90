@@ -261,7 +261,7 @@ contains
 
                          val = mblock(fac * (j + 2 * delta) + neg, fac * j + neg) * mixing_scalars(k) * mixing_scalars(kp)
 
-                         val = val * bl(l) * bl(l + 2 * delta)
+                         val = val * bl(l + odd) * bl(l + odd + 2 * delta)
                          out(iband, block_col * ncomp + (kp - 1)) = &
                               out(iband, block_col * ncomp + (kp - 1)) + real(val, kind=sp)
                       end do
