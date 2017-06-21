@@ -4,25 +4,25 @@ model:
 
   components:
     - name: cmb
-      lmax: 2000
+      lmax: 4000
       mixmat: '06'
       prior:
-        beta: 0 # -1.5
-        lcross: 1600
+        beta: -1.5
+        lcross: 3000
 
-#    - name: dust
-#      lmax: 4000
-#      mixmat: '01'
-#      prior:
-#        beta: -1.5
-#        lcross: 3000
+    - name: dust
+      lmax: 5000
+      mixmat: '01'
+      prior:
+        beta: -1.5
+        lcross: 4000
 
-    #- name: synch
-    #  lmax: 500
-    #  mixmat: '02'
-    #  prior:
-    #    beta: 0 #-1.5
-    #    lcross: 300
+    - name: synch
+      lmax: 600
+      mixmat: '02'
+      prior:
+        beta: -1.5
+        lcross: 300
 
 
 datasets:
@@ -33,11 +33,28 @@ datasets:
     beam_template: beam_dx11d2_uni_{band[name]}_x_{band[name]}.fits
 
     bands:
+#    hfi_observation('545-2', '02'),
+#    hfi_observation('353-1', '05'),
+#    hfi_observation('217-4', '09'),
+#    hfi_observation('143-ds2', '11'),
+#    lfi_observation('070-18_23', '19'),
+#    lfi_observation('044', '18'),
+#    lfi_observation('030', '17'),
 
       - name: '100-ds1'
         mixmat: '16'
-#      - name: '857-2'
-#        mixmat: '01'
+        
+      - name: '143-ds1'
+        mixmat: '10'
+        
+      - name: '217-4'
+        mixmat: '09'
+        
+      - name: '353-2'
+        mixmat: '05'
+        
+      - name: '857-2'
+        mixmat: '01'
 
 
   - name: planck_lfi
@@ -47,11 +64,11 @@ datasets:
     beam_template: beam_dx11d2_uni_{band[name]}.fits
 
     bands:
-#      - name: '030'
-#        mixmat: '17'
+      - name: '030'
+        mixmat: '17'
 
-#      - name: '044'
-#        mixmat: '18'
+      - name: '044'
+        mixmat: '18'
 
       - name: '070-18_23'
         mixmat: '19'

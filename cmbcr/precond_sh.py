@@ -17,31 +17,42 @@ class BandedHarmonicPreconditioner(object):
         precond_data = np.zeros((5 * system.comp_count, system.comp_count * (lmax + 1)**2), dtype=np.float32, order='F')
         Ni_diag = 0
 
+        dl = np.zeros((lmax + 1, system.comp_count), order='F')
+        for k in range(system.comp_count):
+            dl[:, k] += pad_or_trunc(system.dl_list[k], lmax + 1)
+
+        
         for nu in range(system.band_count):
 
-            #ninv_phase_maps = np.zeros(
-            #    (2 * lmax + 1, system.lmax_ninv + 1, (system.comp_count * (system.comp_count + 1)) // 2),
-            #    order='F', dtype=np.complex128)
+            ninv_phase_maps = np.zeros(
+                (2 * lmax + 1, system.lmax_ninv + 1, (system.comp_count * (system.comp_count + 1)) // 2),
+                order='F', dtype=np.complex128)
 
             ninv_phase, thetas = gauss_ring_map_to_phase_map(system.ninv_gauss_lst[nu], system.lmax_ninv, lmax)
-            #assert thetas.shape[0] == ninv_phase_maps.shape[1]
+            for k in range(system.comp_count):
+                for kp in range(k + 1):
+                    if couplings or k == kp:
+                        ninv_phase_maps[:, :, k_kp_idx(k, kp)] = (
+                            ninv_phase * system.mixing_scalars[nu, k] * system.mixing_scalars[nu, kp])
 
             with timed('construct_banded_preconditioner {}'.format(nu)):
                 construct_banded_preconditioner(
-                    lmax,
-                    system.comp_count,
-                    thetas,
-                    ninv_phase.copy('F'),
+                    lmax=lmax,
+                    ncomp=system.comp_count,
+                    thetas=thetas,
                     bl=system.bl_list[nu][:lmax + 1],
-                    mixing_scalars=system.mixing_scalars[nu, :].copy(),
+                    dl=dl,
+                    phase_map=ninv_phase_maps,
+                    #mixing_scalars=system.mixing_scalars[nu, :].copy(),
                     out=precond_data)
-
-        for k in range(system.comp_count):
-            precond_data[0, k::system.comp_count] += scatter_l_to_lm(pad_or_trunc(system.dl_list[k], lmax + 1))
+            # Only add dl in first iteration
+            dl *= 0
             
         if diagonal:
             precond_data[1:, :] = 0
 
+        self.debug_diagonal = precond_data[0, :].copy()
+            
         if factor:
             factor_banded_preconditioner(lmax, system.comp_count, precond_data)
 

@@ -53,7 +53,7 @@ class HarmonicPrior(object):
 
 
 class CrSystem(object):
-    def __init__(self, ninv_maps, bl_list, mixing_maps, prior_list):
+    def __init__(self, ninv_maps, bl_list, mixing_maps, prior_list, pixel_domain=False, tilesize=4):
         self.ninv_maps = ninv_maps
         self.bl_list = bl_list
         self.mixing_maps = mixing_maps
@@ -61,18 +61,23 @@ class CrSystem(object):
         self.band_count = len(ninv_maps)
         self.comp_count = len(prior_list)
         self.lmax_list = [prior.lmax for prior in prior_list]
-        self.sh_lengths = [(lmax + 1)**2 for lmax in self.lmax_list]
-        self.sh_offsets = np.concatenate([[0], np.cumsum(self.sh_lengths)])
+        self.pixel_domain = pixel_domain
+        if self.pixel_domain:
+            self.x_grids = [sympix.make_sympix_grid(lmax + 1, tilesize, n_start=8) for lmax in self.lmax_list]
+            self.x_plans = [sharp.SymPixGridPlan(grid, grid.lmax) for grid in self.x_grids]
+        else:
+            self.x_lengths = [(lmax + 1)**2 for lmax in self.lmax_list]
+            self.x_offsets = np.concatenate([[0], np.cumsum(self.x_lengths)])
 
     def stack(self, x_lst):
         for k, x in enumerate(x_lst):
-            assert self.sh_lengths[k] == x.shape[0]
+            assert self.x_lengths[k] == x.shape[0]
         return np.concatenate(x_lst)
 
     def unstack(self, x):
         result = []
         for k in range(self.comp_count):
-            result.append(x[self.sh_offsets[k]:self.sh_offsets[k + 1]])
+            result.append(x[self.x_offsets[k]:self.x_offsets[k + 1]])
         return result
 
     def copy_with(self, **kw):
@@ -84,8 +89,9 @@ class CrSystem(object):
         return CrSystem(**self_kw)
 
     def set_params(self, lmax_ninv, rot_ang, flat_mixing):
-        self.lmax_mixed = self.lmax_mixing_pix = max(self.lmax_list)
+        self.lmax_mixed = max(self.lmax_list)
         self.lmax_ninv = lmax_ninv
+        self.lmax_mixing_pix = self.lmax_mixed #lmax_ninv
         self.rot_ang = rot_ang
         self.flat_mixing = flat_mixing
 
@@ -127,9 +133,8 @@ class CrSystem(object):
         # Rescale prior vs. mixing_scalars and mixing_maps_ugrade and mixing_maps to avoid some numerical issues
         # We adjust mixing_scalars in-place. self.mixing_maps is kept as is but all derived quantities
         # computed in this routine are changed
+        ## self.component_scale = np.ones(self.comp_count) # DEBUG
         self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
-        #self.component_scale = self.component_scale * 0 + 1
-        #self.component_scale = np.array([1., 1e6])
         self.mixing_scalars *= self.component_scale[None, :]
         for k in range(self.comp_count):
             self.dl_list[k] *= self.component_scale[k]**2
@@ -190,7 +195,7 @@ class CrSystem(object):
 
 
     @classmethod
-    def from_config(cls, config_doc):
+    def from_config(cls, config_doc, rms_treshold=1):
         ninv_maps = []
         bl_list = []
         prior_list = []
@@ -209,6 +214,9 @@ class CrSystem(object):
                 beam_filename = os.path.join(path, dataset['beam_template'].format(band=band))
 
                 rms = load_map_cached(rms_filename)
+                rms = rms.copy()
+                alpha = np.percentile(rms, rms_treshold)
+                rms[rms < alpha] = alpha
                 ninv_map = 1 / rms**2
                 ninv_maps.append(ninv_map)
 
@@ -217,7 +225,8 @@ class CrSystem(object):
 
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
-                    mixing_maps[nu, k][:] = mixing_maps[nu, k].mean()
+                    mixing_maps[nu, k] = mixing_maps[nu, k].copy()
+                    mixing_maps[nu, k][:] = mixing_maps[nu, k].mean() ## DEBUG
 
                 nu += 1
 
@@ -235,8 +244,9 @@ class CrSystem(object):
         #plt.clf()
         for k in range(self.comp_count):
             L = lmax or self.lmax_list[k]
-            plt.semilogy(self.dl_list[k][:L + 1], 'k-')
-            plt.semilogy(self.ni_approx_by_comp_lst[k][:L + 1], 'r-')
+            scale = (1 / self.ni_approx_by_comp_lst[k].max())
+            plt.semilogy(self.dl_list[k][:L + 1] * scale)
+            plt.semilogy(self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted')
         plt.draw()
 
 
@@ -251,7 +261,8 @@ def downgrade_system(system, fraction):
 
         ls = np.arange(int(bl.shape[0] * fraction + 1), dtype=np.double)
 
-        new_bl_list.append(np.exp(-0.5 * ls * (ls + 1) * (sigma / fraction**2)))
+        new_bl = np.exp(-0.5 * ls * (ls + 1) * (sigma / fraction**2))
+        new_bl_list.append(new_bl)
 
     new_prior_list = []
     for prior in system.prior_list:

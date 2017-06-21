@@ -10,7 +10,7 @@ from . import sharp
 
 class PixelPreconditioner(object):
 
-    def __init__(self, system, tilesize=4, ninv_factor=2):
+    def __init__(self, system, tilesize=8, ninv_factor=2, prior=True):
         lmax = max(system.lmax_list)
         self.grid = sympix.make_sympix_grid(lmax + 1, tilesize, n_start=8)
         grid_ninv = self.grid.with_tilesize(tilesize * ninv_factor)
@@ -37,6 +37,18 @@ class PixelPreconditioner(object):
                     ninv_map.reshape(grid_ninv.tilesize**2, grid_ninv.ntiles, order='F'),
                     A_sparse)
 
+
+            k = kp = 0  # DEBUG
+            if k == kp and prior:
+                Si_blocks = sympix_mg.compute_many_YDYt_blocks(
+                    self.grid, self.grid,
+                    system.dl_list[k],
+                    np.asarray(label_to_i_lower, dtype=np.int32),
+                    np.asarray(label_to_j_lower, dtype=np.int32))
+                Si_blocks = Si_blocks[:, :, neighmat_lower.data]
+                A_sparse.blocks += Si_blocks
+
+                
         self.diagonal_blocks = A_sparse.blocks[:, :, A_sparse.labels[A_sparse.indptr[:-1]]].copy('F')
         block_matrix.block_diagonal_factor(self.diagonal_blocks)
 

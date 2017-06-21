@@ -15,20 +15,21 @@ reload(cmbcr.precond_sh)
 reload(cmbcr.precond_psuedoinv)
 reload(cmbcr.precond_pixel)
 reload(cmbcr.utils)
+reload(cmbcr.multilevel)
 reload(cmbcr)
 from cmbcr.utils import *
 
 #reload(cmbcr.main)
 
+import sys
 from cmbcr.cg import cg_generator
 
-
-config = cmbcr.load_config_file('input/basic.yaml')
+config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 full_res_system = cmbcr.CrSystem.from_config(config)
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.04)
+system = cmbcr.downgrade_system(full_res_system, 0.03)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -62,7 +63,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=20):
+    def __init__(self, label, style, preconditioner, n=40):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -123,35 +124,79 @@ class Benchmark(object):
  
 #1/0
     
-#diag_precond = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True)
 
 
-precond = cmbcr.PixelPreconditioner(system)
-bench = Benchmark(
-    '',
-    '-o',
-    precond)
-bench.plotscale()
-1/0
+#precond = cmbcr.PixelPreconditioner(system)
+#bench = Benchmark(
+#    'Pixel',
+#    '-o',
+#    precond)
+##bench.ploterr()
 
-clf()
-benchmark_plot(
-    'Diagonal',
-    '-o',
-    diag_precond)
 
-benchmark_plot(
-    'Banded',
-    '-o',
-    cmbcr.BandedHarmonicPreconditioner(system, diagonal=False))
+#bench.plotscale()
+#1/0
+
 
 if 0:
-    benchmark_plot(
-        'Psuedo-inverse',
+    A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
+    M = hammer(lambda x: system.stack(diag_precond.apply(system.unstack(x))), system.x_offsets[-1])
+    clf()
+    semilogy(A.diagonal(), '-o', label='A')
+    semilogy(1 / M.diagonal(), '-o', label='M')
+    legend()
+    draw()
+    1/0
+
+
+diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
+
+benchmarks = [
+    Benchmark(
+        'Diagonal',
         '-o',
-        cmbcr.PsuedoInversePreconditioner(
-            system,
-            mg=False,
-            hi_l_precond=diag_precond))
+        diag_precond_nocouplings),
+
+#    Benchmark(
+#        'Diagonal (couplings)',
+#        '-o',
+#        diag_precond_couplings,
+#        ),
+
+    Benchmark(
+        'Banded',
+        '-o',
+        cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=False),
+        ),
+        
+#    Benchmark(
+#        'Banded (couplings)',
+#        '-o',
+#        cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)),
+    
+        
+    ]
+
+if sys.argv[1] == 'single':
+    benchmarks.extend([
+        Benchmark(
+            'Pixel',
+            '-o',
+            cmbcr.PixelPreconditioner(system, prior=False),
+        ),
+        Benchmark(
+            'Psuedo-inverse',
+            '-o',
+            cmbcr.BlockPreconditioner(
+                system,
+                cmbcr.PsuedoInversePreconditioner(system),
+                diag_precond_nocouplings,
+            )),
+    ])
+    
+    
+clf()
+for bench in benchmarks:
+    bench.ploterr()
 legend()
 draw()
