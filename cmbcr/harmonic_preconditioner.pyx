@@ -12,7 +12,7 @@ def k_kp_idx(k, kp):
 cdef extern:
      void construct_banded_preconditioner_ "construct_banded_preconditioner"(
           int32_t lmax, int32_t ncomp, int32_t ntheta, double *thetas,
-          double complex *phase_map, double *mixing_scalars, double *bl, float *out) nogil
+          double complex *phase_map, double *bl, double *dl, float *out) nogil
      void factor_banded_preconditioner_ "factor_banded_preconditioner"(int32_t lmax, int32_t ncomp, float *data, int32_t *info) nogil
      void solve_banded_preconditioner_ "solve_banded_preconditioner"(int32_t lmax, int32_t ncomp, float *data, float *x) nogil
 
@@ -39,9 +39,9 @@ def construct_banded_preconditioner(
         int32_t lmax,
         int32_t ncomp,
         cnp.ndarray[double, ndim=1, mode='fortran'] thetas,
-        cnp.ndarray[double complex, ndim=2, mode='fortran'] phase_map,
-        cnp.ndarray[double, ndim=1, mode='fortran'] mixing_scalars,
+        cnp.ndarray[double complex, ndim=3, mode='fortran'] phase_map,
         cnp.ndarray[double, ndim=1, mode='fortran'] bl,
+        cnp.ndarray[double, ndim=2, mode='fortran'] dl,
         out=None):
     cdef cnp.ndarray[float, ndim=2, mode='fortran'] out_
     if out is None:
@@ -50,10 +50,12 @@ def construct_banded_preconditioner(
         if out.shape[0] != 5 * ncomp or out.shape[1] != ncomp * (lmax + 1)**2:
             raise ValueError()
     out_ = out
-    if mixing_scalars.shape[0] != ncomp:
+    if phase_map.shape[2] != ((ncomp + 1) * ncomp) // 2:
+        raise ValueError('phase_map wrong shape')
+    if dl.shape[1] != ncomp:
         raise ValueError('dl wrong shape')
     with nogil:
-        construct_banded_preconditioner_(lmax, ncomp, thetas.shape[0], &thetas[0], &phase_map[0, 0], &mixing_scalars[0], &bl[0], &out_[0, 0])
+        construct_banded_preconditioner_(lmax, ncomp, thetas.shape[0], &thetas[0], &phase_map[0, 0, 0], &bl[0], &dl[0, 0], &out_[0, 0])
     return out
 
 

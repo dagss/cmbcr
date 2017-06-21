@@ -183,13 +183,16 @@ contains
 
   end subroutine compute_real_Yh_D_Y_block_on_diagonal
 
-  subroutine construct_banded_preconditioner(lmax, ncomp, ntheta, thetas, phase_map, mixing_scalars, bl, out) bind(c)
+  subroutine construct_banded_preconditioner(lmax, ncomp, ntheta, thetas, phase_maps, bl, dl, out) bind(c)
     integer(i4b), value :: lmax, ncomp, ntheta
     real(dp), dimension(1:ntheta) :: thetas
     real(dp), dimension(0:lmax) :: bl
+    real(dp), dimension(0:lmax, 1:ncomp) :: dl
 
-    complex(dpc), dimension(0:2 * lmax, 1:ntheta) :: phase_map
-    real(dp), dimension(ncomp) :: mixing_scalars
+    ! phase_maps: triangle of phase_maps for all (k,k') combinations; ordered as
+    ! the lower triangle of a (k,k')-matrix, that is, map order is (k=1, k'=1),
+    ! (k=2,k'=1), (k=2,k'=2), (k=3,k'=1), ...
+    complex(dpc), dimension(0:2 * lmax, 1:ntheta, 1:((ncomp + 1)*ncomp)/2) :: phase_maps
 
     !-- out: we *add* to out; so it should be initialized to zero (or something that should
     !-- be added to) on input;
@@ -198,7 +201,7 @@ contains
 
     !--
     integer(i4b) :: m, neg, odd, delta, block_col, j, l, fac, k, kp, iband
-    real(dp), allocatable, dimension(:, :) :: mblock
+    real(dp), allocatable, dimension(:, :, :) :: mblock
     real(dp) :: val
 
     ! precompute offsets since we're too lazy to figure out the formulas, and we want to parallelize loop
@@ -210,15 +213,31 @@ contains
     end do
 
     !$OMP parallel default(none) &
-    !$OMP     shared(out,lmax,offsets,bl,thetas,phase_map,ntheta,ncomp,mixing_scalars) &
+    !$OMP     shared(out,lmax,offsets,dl,bl,thetas,phase_maps,ntheta,ncomp) &
     !$OMP     private(m,neg,odd,val,block_col,mblock,j,l,fac,iband)
     !$OMP do schedule(dynamic,1)
     do m = 0, lmax
        block_col = offsets(m)
 
        allocate(mblock(0:merge(lmax - m, 2 * (lmax - m) + 1, m == 0), &
-                       0:merge(lmax - m, 2 * (lmax - m) + 1, m == 0)))
-       call compute_real_Yh_D_Y_block_on_diagonal(m, lmax, ntheta, thetas, phase_map, mblock)
+                       0:merge(lmax - m, 2 * (lmax - m) + 1, m == 0), &
+                       ((ncomp + 1)*ncomp) / 2))
+       do k = 1, ncomp
+          do kp = 1, k
+             call compute_real_Yh_D_Y_block_on_diagonal(m, lmax, ntheta, thetas, &
+                  phase_maps(:, :, k_kp_idx(k, kp)), mblock(:, :, k_kp_idx(k, kp)))
+
+             do l = 0, merge(lmax - m, 2 * (lmax - m) + 1, m == 0)
+                if (mblock(l,l,k_kp_idx(k,kp)) < 0) then
+                   print *, 'WARNING, m=', m, 'has negative diagonal'
+                   print *, mblock
+                   print *, '==='
+                end if
+             end do
+          end do
+       end do
+
+
 
        fac = merge(1, 2, m == 0)
        do neg = 0, 1
@@ -259,9 +278,10 @@ contains
                          iband = delta * ncomp + (k - 1) - (kp - 1) + 1
                          if (iband < 1) cycle ! we are above the diagonal, the '.' values above diagonal in diagram above
 
-                         val = mblock(fac * (j + 2 * delta) + neg, fac * j + neg) * mixing_scalars(k) * mixing_scalars(kp)
+                         val = mblock(fac * (j + 2 * delta) + neg, fac * j + neg, k_kp_idx(k, kp))
 
                          val = val * bl(l + odd) * bl(l + odd + 2 * delta)
+                         if (delta == 0 .and. k == kp) val = val + dl(l + odd, k)
                          out(iband, block_col * ncomp + (kp - 1)) = &
                               out(iband, block_col * ncomp + (kp - 1)) + real(val, kind=sp)
                       end do
