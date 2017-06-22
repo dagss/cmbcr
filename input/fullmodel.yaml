@@ -7,21 +7,21 @@ model:
       lmax: 4000
       mixmat: '06'
       prior:
-        beta: -1.5
+        beta: -0.5
         lcross: 3000
 
     - name: dust
       lmax: 5000
       mixmat: '01'
       prior:
-        beta: -1.5
+        beta: -0.5
         lcross: 4000
 
     - name: synch
       lmax: 600
       mixmat: '02'
       prior:
-        beta: -1.5
+        beta: -0.5
         lcross: 300
 
 

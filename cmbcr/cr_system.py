@@ -131,8 +131,19 @@ class CrSystem(object):
             for nu, ninv_map in enumerate(self.ninv_maps):
                 winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
 
-                # Rescale to make N^{-1} as close as possible to identity matrix
-                alpha = ninv_map.sum() / (ninv_map**2).sum()
+
+                # Rescale to make \Y^T N^{-1} Y as close as possible to identity matrix, for the psuedo-inverse precond
+                
+                # ninv_gauss has *W* included in it. To normalize it we want a map without the weights..
+                p = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_ninv)
+                ninv_gauss_no_w = p.synthesis(winv_ninv_sh)
+
+                # did some experimentation and indeed 1.0 is the optimal value below, just to verify the intuition;
+                # when plotted this makes the diagonal of Y^T N^{-1} Y not center on 1, but I suppose that "power"
+                # is in the rest of the matrix
+                q = ninv_gauss_no_w[ninv_gauss_no_w > ninv_gauss_no_w.max() * 7e-4]
+                alpha = 1.0 * q.sum() / (q**2).sum()
+                #alpha = 1.0 * ninv_gauss_no_w.sum() / (ninv_gauss_no_w**2).sum()
 
                 ninv_gauss *= alpha
                 self.ninv_scale.append(np.sqrt(1. / alpha))
@@ -236,6 +247,8 @@ class CrSystem(object):
                 alpha = np.percentile(rms, rms_treshold)
                 rms[rms < alpha] = alpha
                 ninv_map = 1 / rms**2
+                npix = ninv_map.shape[0]
+                ninv_map[2*npix//10:4*npix//10] = 0
                 ninv_maps.append(ninv_map)
 
                 bl = load_beam_cached(os.path.join(path, dataset['beam_template'].format(band=band)))

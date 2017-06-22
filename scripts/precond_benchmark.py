@@ -29,7 +29,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 full_res_system = cmbcr.CrSystem.from_config(config)
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.1)
+system = cmbcr.downgrade_system(full_res_system, 0.05)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -39,7 +39,8 @@ system.prepare_prior()
 #print system.lmax_list
 #1/0
 lmax_ninv = 2 * max(system.lmax_list)
-rot_ang = (-1.71526923, -0.97844199, -0.03666168)
+rot_ang = (0, 0, 0)
+#rot_ang = (-1.71526923, -0.97844199, -0.03666168)
 
 system.set_params(
     lmax_ninv=lmax_ninv,
@@ -64,7 +65,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=100):
+    def __init__(self, label, style, preconditioner, n=50):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -150,6 +151,22 @@ if 0:
     draw()
     1/0
 
+if 0:
+    clf()
+    for i in range(system.band_count):
+        alpha = 1
+        def op(x):
+            u = system.plan_ninv.synthesis(x)
+            u *= system.ninv_gauss_lst[i] * alpha
+            u = system.plan_ninv.adjoint_synthesis(u)
+            return u
+
+        Ni = hammer(op, (31 + 1)**2)
+
+        plot(Ni.diagonal())
+    draw()
+
+    1/0
 
 diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
 
@@ -179,25 +196,37 @@ benchmarks = [
     Benchmark(
         'Psuedo-inverse',
         '-o',
-        cmbcr.BlockPreconditioner(
-            system,
-            cmbcr.PsuedoInversePreconditioner(system),
-            diag_precond_nocouplings,
-        )),
+        cmbcr.PsuedoInversePreconditioner(system),
+        #cmbcr.BlockPreconditioner(
+        #    system,
+        #    cmbcr.PsuedoInversePreconditioner(system),
+        #    diag_precond_nocouplings,
+        #)
+        ),
         
     ]
 
-if sys.argv[1] == 'single':
-    benchmarks.extend([
-        Benchmark(
-            'Pixel',
-            '-o',
-            cmbcr.PixelPreconditioner(system, prior=False),
-        ),
-    ])
+
+
     
     
-clf()
+## if sys.argv[1] == 'single':
+##     benchmarks.extend([
+##         Benchmark(
+##             'Pixel',
+##             '-o',
+##             cmbcr.PixelPreconditioner(system, prior=False),
+##         ),
+##     ])
+
+#clf()
+#P = benchmarks[-1].preconditioner.P
+#for i in range(P.shape[0]):
+#    plot(P[i, 0, :])
+#draw()
+#1/0
+    
+#clf()
 for bench in benchmarks:
     bench.ploterr()
 legend()
