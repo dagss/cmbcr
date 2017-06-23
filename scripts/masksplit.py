@@ -26,31 +26,152 @@ from cmbcr.cg import cg_generator
 
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
-nside=16
+from cmbcr import sharp
+from cmbcr.beams import gaussian_beam_by_l
 
-full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside)
+mstart = 40
+mstop = 60
 
+d = 0
+mstart_M = mstart + d
+mstop_M = mstop - d
+
+nside = 64
+nside_ninv = nside // 2
+
+
+npix = 12*nside**2
+mask = np.ones(npix)
+mask[mstart_M*npix//100:mstop_M*npix//100] = 0
+
+#L = 3 * nside
+#mlm = sharp.sh_analysis(L, mask)
+#mlm *= scatter_l_to_lm(gaussian_beam_by_l(L, '2 min'))
+#mask = sharp.sh_synthesis(nside, mlm)
+
+
+mask_hi = np.ones(12*nside_ninv**2)
+npix_hi = 12*nside_ninv**2
+mask_hi[mstart*npix_hi//100:mstop*npix_hi//100] = 0
+
+
+full_res_system = cmbcr.CrSystem.from_config(config, mask=mask_hi, udgrade=nside_ninv)
 full_res_system.prepare_prior()
 
+
+
 system = cmbcr.downgrade_system(full_res_system, 0.01)
-system.prepare_prior()
+print system.lmax_list, 'nside', nside, 'nside_ninv', nside_ninv
 
-#full_res_system.plot(lmax=2000)
-#system.plot(lmax=200)
-#1/0
 
-#print system.lmax_list
-#1/0
+
 lmax_ninv = 2 * max(system.lmax_list)
 rot_ang = (0, 0, 0)
-#rot_ang = (-1.71526923, -0.97844199, -0.03666168)
-
 system.set_params(
     lmax_ninv=lmax_ninv,
     rot_ang=rot_ang,
     flat_mixing=False)
 system.prepare_prior()
 system.prepare()
+
+from cmbcr import sharp
+from healpy import mollzoom
+
+
+
+#A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
+#Ainv = np.linalg.inv(A)
+
+lmax = system.lmax_list[0]
+
+def solve_under_mask(r_h):
+    # restrict
+    r_H = sharp.sh_analysis(lmax, sharp.sh_synthesis(nside, r_h) * (1 - mask))
+
+    # solve
+    r_H *= scatter_l_to_lm(1 / system.dl_list[0])
+
+    # prolong
+    c_h = sharp.sh_adjoint_synthesis(lmax, sharp.sh_adjoint_analysis(nside, r_H) * (1 - mask))
+
+    return c_h
+
+data_precond = cmbcr.PsuedoInversePreconditioner(system)
+
+from cmbcr.multilevel import lstmul, lstadd, lstsub
+
+def lstscale(alpha, lst):
+    return [alpha * x for x in lst]
+
+alpha = 1
+
+class PsuedoInvWithMaskPreconditioner(object):
+    def __init__(self, system):
+        pass
+
+    def apply(self, b_lst):
+
+        x_lst = lstscale(alpha, data_precond.apply(b_lst))
+
+        # r = b - A x
+        r_lst = lstsub(b_lst, system.matvec(x_lst))
+        c_lst = [solve_under_mask(r_lst[0])]
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, c_lst)
+
+
+        # r = b - A x
+        r_lst = lstsub(b_lst, system.matvec(x_lst))
+        c_lst = data_precond.apply(r_lst)
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, lstscale(alpha, c_lst))
+
+        return x_lst
+
+from scipy.linalg import eigvalsh
+
+def plotspec(m, q=None, label=None):
+    semilogy(np.abs(eigvalsh(m, q)), label=label)
+
+#M_inner = hammer(lambda x: system.stack(data_precond.apply(system.unstack(x))), system.x_offsets[-1])
+    
+#M1 = hammer(lambda x: system.stack(data_precond.apply(system.unstack(x))), system.x_offsets[-1])
+#M2 = hammer(lambda x: system.stack(precond(system.unstack(x))), system.x_offsets[-1])
+
+#x0 = np.random.normal(size=A.shape[0])
+#b = np.dot(A, x0)
+
+
+#x = np.dot(M1, b)
+#1/0
+
+#clf()
+#plotspec(M2, label='')
+#plotspec(A, np.linalg.inv(M1), label='M1')
+#plotspec(A, np.linalg.inv(M2), label='M2')
+#legend()
+#draw()
+
+#M = hammer(solve_under_mask, system.x_offsets[-1])
+
+
+## def op(x):
+##     x_mask = x * (1 - mask)
+##     x_not_mask = x * mask
+
+##     x_mask = sharp.adjoint_synthesis(system.lmax_list[0])
+##     x_not_mask = sharp.adjoint_synthesis(system.lmax_list[0])
+
+##     x_mask = system.matvec([x_mask])[0]
+##     x_not_mask = system.matvec([x_not_mask])[0]
+
+##     x_mask = sharp.synthesis(nside])
+##     x_not_mask = sharp.synthesis(nside)
+
+##     return x_mask * (1 - mask) + x_not_mask * (
+
+
+
 
 
 rng = np.random.RandomState(1)
@@ -68,7 +189,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=20):
+    def __init__(self, label, style, preconditioner, n=10):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -131,46 +252,6 @@ class Benchmark(object):
 #1/0
     
 
-
-#precond = cmbcr.PixelPreconditioner(system)
-#bench = Benchmark(
-#    'Pixel',
-#    '-o',
-#    precond)
-##bench.ploterr()
-
-
-#bench.plotscale()
-#1/0
-
-
-if 0:
-    A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
-    M = hammer(lambda x: system.stack(diag_precond.apply(system.unstack(x))), system.x_offsets[-1])
-    clf()
-    semilogy(A.diagonal(), '-o', label='A')
-    semilogy(1 / M.diagonal(), '-o', label='M')
-    legend()
-    draw()
-    1/0
-
-if 0:
-    clf()
-    for i in range(system.band_count):
-        alpha = 1
-        def op(x):
-            u = system.plan_ninv.synthesis(x)
-            u *= system.ninv_gauss_lst[i] * alpha
-            u = system.plan_ninv.adjoint_synthesis(u)
-            return u
-
-        Ni = hammer(op, (31 + 1)**2)
-
-        plot(Ni.diagonal())
-    draw()
-
-    1/0
-
 diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
 
 benchmarks = [
@@ -199,7 +280,7 @@ benchmarks = [
     Benchmark(
         'Psuedo-inverse',
         '-o',
-        cmbcr.PsuedoInversePreconditioner(system),
+        PsuedoInvWithMaskPreconditioner(system),
         #cmbcr.BlockPreconditioner(
         #    system,
         #    cmbcr.PsuedoInversePreconditioner(system),

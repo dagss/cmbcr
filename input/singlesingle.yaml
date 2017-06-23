@@ -1,0 +1,31 @@
+
+model:
+  mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
+
+  components:
+    - name: cmb
+      lmax: 3000
+      mixmat: '06'
+      prior:
+        beta: -1.5  #-1.5
+        lcross: 2000
+#    - name: dust
+#      lmax: 3000
+#      mixmat: '01'
+#      prior:
+#        beta: -1.5  #-1.5
+#        lcross: 2000
+
+
+datasets:
+  - name: planck_hfi
+    path: /store/dagss/planckdata/32band
+    map_template: map_dx11d_r2t_zc_{band[name]}_2048_fullres_full.fits
+    rms_template: rms_dx11d_r2t_{band[name]}_2048_fullres_full.fits
+    beam_template: beam_dx11d2_uni_{band[name]}_x_{band[name]}.fits
+
+
+    bands:
+      - name: '143-ds1'
+        mixmat: '10'
+        

@@ -2,7 +2,8 @@ import numpy as np
 import os
 import logging
 
-__all__ = ['CrSystem', 'downgrade_system']
+import healpy
+
 
 
 from .data_utils import load_map, load_beam
@@ -13,6 +14,7 @@ from . import sharp
 from .utils import timed
 from .healpix import nside_of
 
+__all__ = ['CrSystem', 'downgrade_system']
 
 load_map_cached = cached(lambda filename: load_map('raw', filename))
 load_beam_cached = cached(load_beam)
@@ -120,39 +122,21 @@ class CrSystem(object):
         # Make G-L ninv-maps, possibly rotated
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
+        self.use_healpix = use_healpix
 
         # We rescale ninv-maps so that they become as close to identity as possible
-        self.ninv_scale = []
-
         if use_healpix:
             assert False ## not tested any longer, dead code path, probably doesn't work
             self.plan_ninv = None
         else:
             for nu, ninv_map in enumerate(self.ninv_maps):
                 winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
-
-
-                # Rescale to make \Y^T N^{-1} Y as close as possible to identity matrix, for the psuedo-inverse precond
-                
-                # ninv_gauss has *W* included in it. To normalize it we want a map without the weights..
-                p = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_ninv)
-                ninv_gauss_no_w = p.synthesis(winv_ninv_sh)
-
-                # did some experimentation and indeed 1.0 is the optimal value below, just to verify the intuition;
-                # when plotted this makes the diagonal of Y^T N^{-1} Y not center on 1, but I suppose that "power"
-                # is in the rest of the matrix
-                q = ninv_gauss_no_w[ninv_gauss_no_w > ninv_gauss_no_w.max() * 7e-4]
-                alpha = 1.0 * q.sum() / (q**2).sum()
-                #alpha = 1.0 * ninv_gauss_no_w.sum() / (ninv_gauss_no_w**2).sum()
-
-                ninv_gauss *= alpha
-                self.ninv_scale.append(np.sqrt(1. / alpha))
                 self.winv_ninv_sh_lst.append(winv_ninv_sh)
                 self.ninv_gauss_lst.append(ninv_gauss)
             self.plan_ninv = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_mixed)
 
-        self.ninv_scale = np.asarray(self.ninv_scale)
-        self.mixing_scalars *= self.ninv_scale[:, None]  # also, put into mixing_maps_ugrade below
+        ##self.ninv_scale = np.asarray(self.ninv_scale)
+        ##self.mixing_scalars *= self.ninv_scale[:, None]  # also, put into mixing_maps_ugrade below
 
 
         # Rescale prior vs. mixing_scalars and mixing_maps_ugrade and mixing_maps to avoid some numerical issues
@@ -173,9 +157,9 @@ class CrSystem(object):
                 with timed('mixing'):
                     self.mixing_maps_ugrade[nu, k] = (
                         rotate_mixing(self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
-                        * self.component_scale[k]
-                        * self.ninv_scale[nu])
+                        * self.component_scale[k])
                     if self.flat_mixing:
+                        assert False
                         self.mixing_maps_ugrade[nu, k][:] = self.mixing_maps_ugrade[nu, k].mean()
 
         self.plan_outer_lst = [
@@ -224,7 +208,7 @@ class CrSystem(object):
 
 
     @classmethod
-    def from_config(cls, config_doc, rms_treshold=1):
+    def from_config(cls, config_doc, rms_treshold=1, mask=None, udgrade=None):
         ninv_maps = []
         bl_list = []
         prior_list = []
@@ -244,11 +228,15 @@ class CrSystem(object):
 
                 rms = load_map_cached(rms_filename)
                 rms = rms.copy()
+
+                if udgrade is not None:
+                    rms = healpy.ud_grade(rms, order_in='RING', order_out='RING', nside_out=udgrade, power=1)
+                
                 alpha = np.percentile(rms, rms_treshold)
                 rms[rms < alpha] = alpha
                 ninv_map = 1 / rms**2
-                npix = ninv_map.shape[0]
-                ninv_map[2*npix//10:4*npix//10] = 0
+                if mask is not None:
+                    ninv_map *= mask
                 ninv_maps.append(ninv_map)
 
                 bl = load_beam_cached(os.path.join(path, dataset['beam_template'].format(band=band)))
