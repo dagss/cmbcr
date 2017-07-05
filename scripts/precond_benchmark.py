@@ -219,8 +219,7 @@ benchmarks = [
     Benchmark(
         'Psuedo-inverse',
         '-o',
-        cmbcr.PsuedoInversePreconditioner(system),
-        #cmbcr.PsuedoInverseWithMaskPreconditioner(system),
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system),
         ),
         
     ]
