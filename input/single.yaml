@@ -32,14 +32,14 @@ datasets:
       - name: '143-ds1'
         mixmat: '10'
         
-      - name: '217-4'
-        mixmat: '09'
+#      - name: '217-4'
+#        mixmat: '09'
         
-      - name: '353-2'
-        mixmat: '05'
+#      - name: '353-2'
+#        mixmat: '05'
         
-      - name: '857-2'
-        mixmat: '01'
+#      - name: '857-2'
+#        mixmat: '01'
 
 
   - name: planck_lfi

@@ -26,13 +26,13 @@ from cmbcr.cg import cg_generator
 
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
-nside=16
+nside = 128
 
-full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside)
+full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
 
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.01)
+system = cmbcr.downgrade_system(full_res_system, 0.05)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -48,15 +48,29 @@ rot_ang = (0, 0, 0)
 system.set_params(
     lmax_ninv=lmax_ninv,
     rot_ang=rot_ang,
-    flat_mixing=False)
+    flat_mixing=False,
+    )
 system.prepare_prior()
-system.prepare()
+system.prepare(use_healpix=True)
 
 
 rng = np.random.RandomState(1)
 
+def load_Cl_cmb(lmax, filename='camb_11229992_scalcls.dat'):
+    #dat = np.loadtxt()
+    dat = np.loadtxt(filename)
+    assert dat[0,0] == 0 and dat[1,0] == 1 and dat[2,0] == 2
+    Cl = dat[:, 1][:lmax + 1]
+    ls = np.arange(2, lmax + 1)
+    Cl[2:] /= ls * (ls + 1) / 2 / np.pi
+    Cl[0] = Cl[1] = Cl[2]
+    return Cl
+Cl_cmb = load_Cl_cmb(10000)
+
+
 x0 = [
     #scatter_l_to_lm(system.dl_list[k]) *
+    scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
     ]
@@ -68,7 +82,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=20):
+    def __init__(self, label, style, preconditioner, n=80):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -80,9 +94,15 @@ class Benchmark(object):
         self.err_norms = []
         self.reslst = []
 
+        if hasattr(self.preconditioner, 'starting_vector'):
+            start_vec = system.stack(self.preconditioner.starting_vector(b))
+        else:
+            start_vec = np.zeros_like(x0_stacked)
+        
         solver = cg_generator(
             lambda x: system.stack(system.matvec(system.unstack(x))),
             system.stack(b),
+            x0=start_vec,
             M=lambda x: system.stack(self.preconditioner.apply(system.unstack(x))))
 
         self.err_vecs.append(x0)
@@ -199,7 +219,7 @@ benchmarks = [
     Benchmark(
         'Psuedo-inverse',
         '-o',
-        cmbcr.PsuedoInversePreconditioner(system),
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system),
         #cmbcr.BlockPreconditioner(
         #    system,
         #    cmbcr.PsuedoInversePreconditioner(system),

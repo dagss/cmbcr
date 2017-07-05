@@ -1,5 +1,6 @@
 import numpy as np
-from .utils import pad_or_truncate_alm
+import healpy
+from .utils import pad_or_truncate_alm, timed
 from .mmajor import scatter_l_to_lm
 from .mblocks import gauss_ring_map_to_phase_map
 from . import sharp
@@ -124,7 +125,8 @@ class PsuedoInversePreconditioner(object):
             self.D_lm_lst.append(D_lm)
 
         self.P = create_mixing_matrix(system, lmax, self.D_lm_lst)
-        self.Pi = pinv_block_diagonal(self.P)
+        self.Pi = pinv_block_diagonal(self.P).astype(np.float32).copy('F')
+        
         lmax = max(system.lmax_list)
         self.lmax = lmax
         self.plan = sharp.RealMmajorGaussPlan(system.lmax_ninv, lmax)
@@ -143,22 +145,127 @@ class PsuedoInversePreconditioner(object):
             self.inv_inv_maps = [make_inv_map(x) for x in system.ninv_gauss_lst]
 
     def apply(self, x_lst):
-        x_lst = apply_block_diagonal_pinv_transpose(self.system, self.Pi, x_lst)
-        c_h = []
-        for nu in range(self.system.band_count):
-            u = x_lst[nu]
-            u *= self.D_lm_lst[nu]
-            if self.system.use_healpix:
-                n_map = self.inv_inv_maps[nu]
-                u = sharp.sh_adjoint_analysis(nside_of(n_map), u)
-                u *= n_map
-                u = sharp.sh_analysis(self.lmax, u)
-            else:
-                u = self.plan.adjoint_analysis(u)
-                u *= self.inv_inv_maps[nu]
-                u = self.plan.analysis(u)
-            u *= self.D_lm_lst[nu]
-            c_h.append(u)
+        with timed('UT+'):
+            x_lst = apply_block_diagonal_pinv_transpose(self.system, self.Pi, x_lst)
+        with timed('SHTs'):
+            c_h = []
+            for nu in range(self.system.band_count):
+                u = x_lst[nu]
+                u *= self.D_lm_lst[nu]
+                if self.system.use_healpix:
+                    n_map = self.inv_inv_maps[nu]
+                    u = sharp.sh_adjoint_analysis(nside_of(n_map), u)
+                    u *= n_map
+                    u = sharp.sh_analysis(self.lmax, u)
+                else:
+                    u = self.plan.adjoint_analysis(u)
+                    u *= self.inv_inv_maps[nu]
+                    u = self.plan.analysis(u)
+                u *= self.D_lm_lst[nu]
+                c_h.append(u)
+            for k in range(self.system.comp_count):
+                c_h.append(x_lst[self.system.band_count + k])
+        with timed('U+'):
+            return apply_block_diagonal_pinv(self.system, self.Pi, c_h)
+
+
+class PsuedoInverseWithMaskPreconditioner(object):
+    def __init__(self, system):
+        self.psuedo_inv = PsuedoInversePreconditioner(system)
+        self.system = system
+
+        if self.system.mask is not None:
+            # Make appropriate masks for each component
+            self.filter_lst = []
+            for k in range(self.system.comp_count):
+                lmax = self.system.lmax_list[k]
+                # round up to nearest power of 2, then divide by 2, to get nside
+                nside = 1
+                while nside < lmax:
+                    nside *= 2
+                nside //= 2
+                mask_ud = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=-1)
+                mask_ud[mask_ud != 0] = 1
+                self.filter_lst.append(1 - mask_ud)
+
+    def filter_vec(self, k, x):
+        # Applies a mask filter for component k to vector x
+        f = self.filter_lst[k]
+        return sharp.sh_analysis(self.system.lmax_list[k], sharp.sh_synthesis(nside_of(f), x) * f)
+
+    def solve_under_mask(self, r_h_lst):
+        c_h_lst = []
         for k in range(self.system.comp_count):
-            c_h.append(x_lst[self.system.band_count + k])
-        return apply_block_diagonal_pinv(self.system, self.Pi, c_h)
+            # restrict
+            r_H = self.filter_vec(k, r_h_lst[k])
+
+            # solve
+            r_H *= scatter_l_to_lm(1 / self.system.dl_list[k][:self.system.lmax_list[k] + 1])
+
+            # prolong
+            c_h = self.filter_vec(k, r_H)
+            c_h_lst.append(c_h)
+        return c_h_lst
+
+    def apply_Pt_2(self, x_lst):
+        return lstsub(x_lst, self.solve_under_mask(self.system.matvec(x_lst, scalar_mixing=True)))
+
+    def apply_P_2(self, x_lst):
+        return lstsub(x_lst, self.system.matvec(self.solve_under_mask(x_lst), scalar_mixing=True))
+    
+    def apply_Pt_1(self, x_lst):
+        return lstsub(x_lst, self.psuedo_inv.apply(self.system.matvec(x_lst, scalar_mixing=True)))
+
+    def apply_P_1(self, x_lst):
+        return lstsub(x_lst, self.system.matvec(self.psuedo_inv.apply(x_lst), scalar_mixing=True))
+
+    def starting_vector(self, b_lst):
+        # P_1-form
+        return self.psuedo_inv.apply(b_lst)
+    
+    def apply(self, b_lst):
+        if self.system.mask is None:
+            return self.psuedo_inv.apply(b_lst)
+        else:
+            return self.apply_MG_V(b_lst)
+            #return self.apply_schwarz(b_lst)
+            #return self.apply_bnn(b_lst)
+    
+    def apply_schwarz(self, b_lst):
+        x_lst = self.psuedo_inv.apply(b_lst)
+        x2_lst = self.solve_under_mask(b_lst)
+        return lstadd(x_lst, x2_lst)
+
+    #def apply_bnn(self, b_lst):
+    #    return lstadd(
+    #        self.apply_Pt_2(self.psuedo_inv.apply(self.apply_P_2(b_lst))),
+    #        self.solve_under_mask(b_lst))
+    
+    def apply_bnn(self, b_lst):
+        return self.apply_Pt_1(self.solve_under_mask(self.apply_P_1(b_lst)))
+
+        return lstadd(
+            self.apply_Pt_1(self.solve_under_mask(self.apply_P_1(b_lst))),
+            self.psuedo_inv.apply(b_lst))
+        #return self.apply_Pt(self.psuedo_inv.apply(b_lst))
+    
+    def apply_MG_V(self, b_lst):
+
+        x_lst = self.psuedo_inv.apply(b_lst)
+
+        # r = b - A x
+        r_lst = lstsub(b_lst, self.system.matvec(x_lst, scalar_mixing=True))
+        c_lst = self.solve_under_mask(r_lst)
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, c_lst)
+
+
+        # r = b - A x
+        r_lst = lstsub(b_lst, self.system.matvec(x_lst, scalar_mixing=True))
+        c_lst = self.psuedo_inv.apply(r_lst)
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, c_lst)
+
+
+        
+        return x_lst
