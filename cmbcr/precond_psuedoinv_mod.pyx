@@ -11,19 +11,53 @@ def k_kp_idx(k, kp):
 
 
 cdef extern:
-     void compsep_apply_U_block_diagonal_ "compsep_apply_U_block_diagonal"(
-         int32_t nobs, int32_t ncomp, int32_t lmax,
-         float *blocks, float *x_comp, float *x_obs, char transpose) nogil
+     void compsep_assemble_U_ "compsep_assemble_u"(
+         int32_t nobs, int32_t ncomp, int32_t lmax, int32_t *lmax_per_comp, double *mixing_scalars,
+         double *bl, double *sqrt_Cl, double *alpha, float *U) nogil
+     void compsep_apply_U_block_diagonal_ "compsep_apply_u_block_diagonal"(
+         int32_t nobs, int32_t ncomp, int32_t lmax, int32_t transpose,
+         float *blocks, float *x) nogil
 
-def compsep_apply_U_block_diagonal(int32_t lmax, blocks, x_comp, x_obs, transpose):
+
+def compsep_assemble_U(lmax_per_comp, mixing_scalars, bl, sqrt_Cl, alpha):
+    cdef int32_t nobs = bl.shape[0]
+    cdef int32_t ncomp = sqrt_Cl.shape[0]
+    cdef int32_t lmax = sqrt_Cl.shape[1] - 1
+    if alpha.shape[0] != nobs:
+        raise ValueError()
+    if bl.shape[1] != lmax + 1:
+        raise ValueError()
+    if mixing_scalars.shape != (nobs, ncomp):
+        raise ValueError()
+    U = np.zeros((nobs + ncomp, ncomp, (lmax + 1)**2), dtype=np.float32, order='F')
+
+    cdef cnp.ndarray[float, ndim=3, mode='fortran'] U_ = U
+    cdef cnp.ndarray[int32_t, ndim=1, mode='fortran'] lmax_per_comp_ = np.asarray(lmax_per_comp, dtype=np.int32, order='F')
+    cdef cnp.ndarray[double, ndim=2, mode='fortran'] mixing_scalars_ = mixing_scalars
+    cdef cnp.ndarray[double, ndim=2, mode='fortran'] bl_ = bl
+    cdef cnp.ndarray[double, ndim=2, mode='fortran'] sqrt_Cl_ = sqrt_Cl
+    cdef cnp.ndarray[double, ndim=1, mode='fortran'] alpha_ = alpha
+
+    if lmax_per_comp_.shape[0] != ncomp:
+        raise ValueError()
+
+    with nogil:
+        compsep_assemble_U_(
+            nobs, ncomp, lmax, &lmax_per_comp_[0], &mixing_scalars_[0, 0],
+            &bl_[0, 0], &sqrt_Cl_[0, 0], &alpha_[0], &U_[0, 0, 0])
+    return U
+
+
+def compsep_apply_U_block_diagonal(int32_t lmax, blocks, x, transpose):
     cdef cnp.ndarray[float, ndim=3, mode='fortran'] blocks_ = blocks
-    cdef cnp.ndarray[float, ndim=2, mode='fortran'] x_comp_ = x_comp
-    cdef cnp.ndarray[float, ndim=2, mode='fortran'] x_obs_ = x_obs
-    cdef char trans_c
-    if transpose:
-        trans_c = 'T'
-    else:
-        trans_c = 'N'
+    cdef cnp.ndarray[float, ndim=2, mode='fortran'] x_ = x
+    cdef int32_t trans_c = (1 if transpose else 0)
+    if x.shape[0] != (lmax + 1)**2:
+        raise ValueError()
+    if x.shape[1] != blocks.shape[0]:
+        raise ValueError()
+    if blocks_.shape[1] >= blocks.shape[0]:
+        raise ValueError()
     with nogil:
         compsep_apply_U_block_diagonal_(
-            blocks_.shape[0], blocks_.shape[1], lmax, &blocks_[0, 0, 0], &x_comp_[0, 0], &x_obs_[0, 0], trans_c)
+            blocks_.shape[0] - blocks_.shape[1], blocks_.shape[1], lmax, trans_c, &blocks_[0, 0, 0], &x_[0, 0])

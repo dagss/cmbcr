@@ -32,7 +32,7 @@ full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8
 
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.05)
+system = cmbcr.downgrade_system(full_res_system, 0.02)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -219,12 +219,8 @@ benchmarks = [
     Benchmark(
         'Psuedo-inverse',
         '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system),
-        #cmbcr.BlockPreconditioner(
-        #    system,
-        #    cmbcr.PsuedoInversePreconditioner(system),
-        #    diag_precond_nocouplings,
-        #)
+        cmbcr.PsuedoInversePreconditioner(system),
+        #cmbcr.PsuedoInverseWithMaskPreconditioner(system),
         ),
         
     ]
