@@ -27,12 +27,14 @@ from cmbcr.cg import cg_generator
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 nside = 128
+factor = nside / 2048.
+print 'factor dg', factor
 
 full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
 
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.02)
+system = cmbcr.downgrade_system(full_res_system, factor)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -82,7 +84,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=80):
+    def __init__(self, label, style, preconditioner, n=40):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -115,7 +117,7 @@ class Benchmark(object):
             err = np.linalg.norm(x - x0_stacked) / np.linalg.norm(x0_stacked)
             self.err_norms.append(err)
             self.reslst.append(np.linalg.norm(r) / r0)
-            if err < 1e-8 or i >= n:
+            if err < 1e-3 or i >= n:
                 break
 
         
@@ -247,6 +249,6 @@ benchmarks = [
 clf()
 for bench in benchmarks:
     bench.ploterr()
-gca().set_ylim((1e-8, 2))
+gca().set_ylim((1e-3, 2))
 legend()
 draw()

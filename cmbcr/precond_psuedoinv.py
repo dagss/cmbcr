@@ -212,8 +212,8 @@ class PsuedoInverseWithMaskPreconditioner(object):
         if self.system.mask is None:
             return self.psuedo_inv.apply(b_lst)
         else:
-            return self.apply_MG_V(b_lst)
-            #return self.apply_schwarz(b_lst)
+            #return self.apply_MG_V(b_lst)
+            return self.apply_schwarz(b_lst)
             #return self.apply_bnn(b_lst)
 
     def apply_schwarz(self, b_lst):
