@@ -27,12 +27,13 @@ contains
                 ! We need to specifically truncate components as there is no function of
                 ! (k, l) above. For bands this is handled implicitly by bl(nu, l) being
                 ! zero.
-                print *, l, 'took zero path'
                 U(nu, k, l) = 0_sp
              end if
           end do
           U(nobs + k, :, l) = 0_sp
-          U(nobs + k, k, l) = real(sqrt_invCl(k, l), kind=sp)
+          if (l .le. lmax_per_comp(k)) then
+             U(nobs + k, k, l) = real(sqrt_invCl(k, l), kind=sp)
+          end if
        end do
 
     end do
