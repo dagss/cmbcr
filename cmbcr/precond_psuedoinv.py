@@ -204,16 +204,16 @@ class PsuedoInverseWithMaskPreconditioner(object):
     def apply_P_1(self, x_lst):
         return lstsub(x_lst, self.system.matvec(self.psuedo_inv.apply(x_lst), scalar_mixing=True))
 
-    def starting_vector(self, b_lst):
-        # P_1-form
-        return self.psuedo_inv.apply(b_lst)
+    #def starting_vector(self, b_lst):
+    #    # P_1-form
+    #    return self.psuedo_inv.apply(b_lst)
 
     def apply(self, b_lst):
         if self.system.mask is None:
             return self.psuedo_inv.apply(b_lst)
         else:
-            #return self.apply_MG_V(b_lst)
-            return self.apply_schwarz(b_lst)
+            return self.apply_MG_V(b_lst)
+            #return self.apply_schwarz(b_lst)
             #return self.apply_bnn(b_lst)
 
     def apply_schwarz(self, b_lst):

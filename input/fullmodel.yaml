@@ -9,21 +9,21 @@ model:
       mixmat: '06'
       prior:
         beta: -0.5
-        lcross: 3000
+        lcross: 2000
 
     - name: dust
-      lmax: 5000
+      lmax: 4000
       mixmat: '01'
       prior:
         beta: -0.5
-        lcross: 4000
+        lcross: 3000
 
-    - name: synch
-      lmax: 600
-      mixmat: '02'
-      prior:
-        beta: -0.5
-        lcross: 300
+#    - name: synch
+#      lmax: 1000
+#      mixmat: '02'
+#      prior:
+#        beta: -1.5
+#        lcross: 400
 
 
 datasets:
@@ -60,13 +60,15 @@ datasets:
     rms_template: rms_dx11d_r2t_{band[name]}_1024_fullres_full.fits
     beam_template: beam_dx11d2_uni_{band[name]}.fits
 
-    bands:
-      - name: '030'
-        mixmat: '17'
+    bands: []
+#      - name: '070-18_23'
+#        mixmat: '19'
 
-      - name: '044'
-        mixmat: '18'
+      #- name: '044'
+      #  mixmat: '18'
 
-      - name: '070-18_23'
-        mixmat: '19'
+#      - name: '030'
+#        mixmat: '17'
+
+
 

@@ -71,8 +71,8 @@ Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
-    #scatter_l_to_lm(system.dl_list[k]) *
-    scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
+    scatter_l_to_lm(np.sqrt(1 / system.dl_list[k])) *
+    #scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
     ]
@@ -84,7 +84,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=40):
+    def __init__(self, label, style, preconditioner, n=60):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -117,7 +117,7 @@ class Benchmark(object):
             err = np.linalg.norm(x - x0_stacked) / np.linalg.norm(x0_stacked)
             self.err_norms.append(err)
             self.reslst.append(np.linalg.norm(r) / r0)
-            if err < 1e-3 or i >= n:
+            if err < 1e-8 or i >= n:
                 break
 
         
@@ -249,6 +249,6 @@ benchmarks = [
 clf()
 for bench in benchmarks:
     bench.ploterr()
-gca().set_ylim((1e-3, 2))
+gca().set_ylim((1e-8, 2))
 legend()
 draw()

@@ -180,8 +180,10 @@ class CrSystem(object):
 
             for nu in range(self.band_count):
                 # Mix components together
-                y_pix = np.zeros(self.plan_mixed.npix_global)
-                #y = np.zeros((self.lmax_mixed + 1)**2)
+                if scalar_mixing:
+                    y = np.zeros((self.lmax_mixed + 1)**2)
+                else:
+                    y_pix = np.zeros(self.plan_mixed.npix_global)
                 for k in range(self.comp_count):
                     if scalar_mixing:
                         y += pad_or_truncate_alm(x_lst[k], self.lmax_mixed) * self.mixing_scalars[nu, k]
@@ -282,7 +284,7 @@ class CrSystem(object):
                     #healpy.mollzoom(mask_ext - mask_ud)
                     #1/0
                     
-                    ninv_map *= mask_ext
+                    ninv_map *= mask_ud
 
                 ninv_maps.append(ninv_map)
 
