@@ -22,7 +22,7 @@ contains
        do k = 1, ncomp
           do nu = 1, nobs
              if (l .le. lmax_per_comp(k)) then
-                U(nu, k, l) = real(mixing_scalars(nu, k) * bl(nu, l) * alpha(nu), kind=sp)
+                U(nu, k, l) = real(mixing_scalars(nu, k) * bl(nu, l) * alpha(nu) / sqrt_invCl(k, l), kind=sp)
              else
                 ! We need to specifically truncate components as there is no function of
                 ! (k, l) above. For bands this is handled implicitly by bl(nu, l) being
@@ -32,7 +32,7 @@ contains
           end do
           U(nobs + k, :, l) = 0_sp
           if (l .le. lmax_per_comp(k)) then
-             U(nobs + k, k, l) = real(sqrt_invCl(k, l), kind=sp)
+             U(nobs + k, k, l) = 1_sp !real(sqrt_invCl(k, l), kind=sp)
           end if
        end do
 

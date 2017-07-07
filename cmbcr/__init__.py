@@ -9,4 +9,4 @@ from .precond_psuedoinv import *
 from .precond_pixel import *
 from .mmajor import *
 from .multilevel import *
-
+from .precond_diag import *

@@ -38,19 +38,55 @@ def rotate_mixing(lmax_pix, mixing_map, rot_ang):
 
 
 class HarmonicPrior(object):
-    def __init__(self, beta, lcross, lmax):
-        self.beta = beta
-        self.lcross = lcross
+    def __init__(self, lmax, spec):
         self.lmax = lmax
+        self.spec = spec
+
+    def downgrade(self, fraction):
+        spec = dict(self.spec)
+        t = self.spec['type']
+        if t == 'power':
+            spec.update(l=int(self.spec['l'] * fraction + 1))
+        elif t == 'gaussian':
+            spec.update(l_eps=int(self.spec['l_eps'] * fraction + 1))
+        elif t == 'file':
+            spec.update(l=int(self.spec['l'] * fraction + 1))
+        return HarmonicPrior(lmax=int(self.lmax * fraction + 1), spec=spec)
 
     def get_dl(self, system, k):
-        l = np.arange(1, self.lmax + 2, dtype=np.float)
+        t = self.spec['type']
+        if t == 'power':
+            l = np.arange(1, self.lmax + 2, dtype=np.float)
 
-        amplitude = 1. / system.ni_approx_by_comp_lst[k][self.lcross]
-        Cl = amplitude * (l / (self.lcross + 1))**self.beta
-        dl = 1 / Cl
-        if self.beta == 0:
-            dl *= 0
+            amplitude = 1. / system.ni_approx_by_comp_lst[k][self.spec['l']]
+            Cl = amplitude * (l / (self.spec['l'] + 1))**self.spec['beta']
+            dl = 1 / Cl
+        elif t == 'file':
+            dat = np.loadtxt(self.spec['filename'])
+            assert dat[0,0] == 0 and dat[1,0] == 1 and dat[2,0] == 2
+            Cl = dat[:, 1][:self.lmax + 1]
+            ls = np.arange(2, self.lmax + 1)
+            Cl[2:] /= ls * (ls + 1) / 2 / np.pi
+            Cl[0] = Cl[1] = Cl[2]
+
+            ni = system.ni_approx_by_comp_lst[k][self.spec['l']]
+            if ni == 0:
+                # mask-only; doesn't matter what the amplitude is
+                amplitude = 1
+            else:
+                amplitude = 1. / (ni * Cl[self.spec['l']])
+            Cl *= amplitude
+            dl = 1. / Cl
+            
+            
+        elif t == 'gaussian':
+            ls = np.arange(self.lmax + 1)
+            leps = self.spec['l_eps']
+            sigma = np.sqrt(-2. * np.log(self.spec['eps']) / leps / (leps + 1))
+            dl = np.exp(0.5 * ls * (ls + 1) * sigma**2)
+
+        dl *= self.spec.get('relamp', 1.0)
+            
         return dl
 
 
@@ -169,7 +205,10 @@ class CrSystem(object):
     def matvec(self, x_lst):
         assert len(x_lst) == self.comp_count
 
-        x_pix_lst = [self.plan_outer_lst[k].synthesis(x_lst[k]) for k in range(self.comp_count)]
+        x_pix_lst = [
+            self.plan_outer_lst[k].synthesis(
+                x_lst[k] * scatter_l_to_lm(np.sqrt(1. / self.dl_list[k]))
+            ) for k in range(self.comp_count)]
         z_pix_lst = [0] * self.comp_count
         
         for nu in range(self.band_count):
@@ -199,10 +238,14 @@ class CrSystem(object):
                 u = y * self.mixing_maps_ugrade[nu, k]
                 z_pix_lst[k] += u
 
-        z_lst = [self.plan_outer_lst[k].adjoint_synthesis(z_pix_lst[k]) for k in range(self.comp_count)]
+        z_lst = [
+            self.plan_outer_lst[k].adjoint_synthesis(z_pix_lst[k])
+             * scatter_l_to_lm(np.sqrt(1. / self.dl_list[k]))
+            for k in range(self.comp_count)
+            ]
                 
         for k in range(self.comp_count):
-            z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
+            z_lst[k] += x_lst[k] #scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
         return z_lst
 
 
@@ -251,8 +294,9 @@ class CrSystem(object):
         if mask:
             mask = load_map_cached(mask)
             mask = mask.copy()
-            #nside = nside_of(mask)
-            #mask[3*nside**2:8*nside**2] = 0
+            mask[:] = 1
+            nside = nside_of(mask)
+            mask[2*nside**2:10*nside**2] = 0
         else:
             mask = None
         
@@ -289,15 +333,18 @@ class CrSystem(object):
                     mask_ud[mask_ud != 0] = 1
                     
                     mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
-                    mask_lm *= scatter_l_to_lm(bl[:3 * nside + 1])
+                    from .beams import gaussian_beam_by_l
+                    mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '10 deg'))
+                    ## mask_eps = 0.5
+                    ## #mask_lm *= scatter_l_to_lm(bl[:3 * nside + 1]**2)
                     mask_ext = sharp.sh_synthesis(nside, mask_lm)
-                    mask_ext[mask_ext <= mask_eps] = 0
-                    mask_ext[mask_ext > mask_eps] = 1
+                    ## mask_ext[mask_ext <= mask_eps] = 0
+                    ## mask_ext[mask_ext > mask_eps] = 1
 
                     #healpy.mollzoom(mask_ext - mask_ud)
                     #1/0
                     
-                    ninv_map *= mask_ext
+                    ninv_map *= mask_ud
 
                 ninv_maps.append(ninv_map)
 
@@ -309,11 +356,7 @@ class CrSystem(object):
                 nu += 1
 
         for component in config_doc['model']['components']:
-            prior_list.append(HarmonicPrior(
-                beta=component['prior']['beta'],
-                lcross=component['prior']['lcross'],
-                lmax=component['lmax'],
-                ))
+            prior_list.append(HarmonicPrior(component['lmax'], component['prior']))
 
         return cls(ninv_maps=ninv_maps, bl_list=bl_list, mixing_maps=mixing_maps, prior_list=prior_list, mask=mask)
 
@@ -344,10 +387,6 @@ def downgrade_system(system, fraction):
 
     new_prior_list = []
     for prior in system.prior_list:
-        new_prior_list.append(HarmonicPrior(
-            beta=prior.beta,
-            lcross=int(prior.lcross * fraction + 1),
-            lmax=int(prior.lmax * fraction + 1),
-            ))
+        new_prior_list.append(prior.downgrade(fraction))
 
     return system.copy_with(bl_list=new_bl_list, prior_list=new_prior_list, mask=system.mask)

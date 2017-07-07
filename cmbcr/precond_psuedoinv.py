@@ -3,7 +3,7 @@ import healpy
 from .utils import pad_or_truncate_alm, timed, pad_or_trunc
 from .mmajor import scatter_l_to_lm
 from .mblocks import gauss_ring_map_to_phase_map
-from . import sharp
+from . import sharp, beams
 from cmbcr.healpix import nside_of
 from .precond_psuedoinv_mod import compsep_apply_U_block_diagonal, compsep_assemble_U
 
@@ -74,6 +74,9 @@ def create_mixing_matrix(system, lmax, alpha_lst):
     return U
 
 
+def lstscale(a, b):
+    return [a * bx for bx in b]
+
 def lstmul(a, b):
     return [ax * bx for ax, bx in zip(a, b)]
 
@@ -121,7 +124,7 @@ class PsuedoInversePreconditioner(object):
 
         def make_inv_map(x):
             x = x.copy()
-            eps = x.max() * 1e-5#7e-4
+            eps = x.max() * 1e-3
             m = (x < eps)
             x[m] = 0
             x[~m] = 1. / x[~m]
@@ -155,9 +158,10 @@ class PsuedoInversePreconditioner(object):
 
 
 class PsuedoInverseWithMaskPreconditioner(object):
-    def __init__(self, system):
+    def __init__(self, system, method='add'):
         self.psuedo_inv = PsuedoInversePreconditioner(system)
         self.system = system
+        self.method = method
 
         if self.system.mask is not None:
             # Make appropriate masks for each component
@@ -168,27 +172,54 @@ class PsuedoInverseWithMaskPreconditioner(object):
                 nside = 1
                 while nside < lmax:
                     nside *= 2
-                nside //= 2
+                #nside //= 2
+                mask_ud = np.zeros(12 * nside**2)
+
+                #mask_ud[:] = 1
+                #d = 0
+                #mask_ud[int((2 - d)*nside**2):int((10 + d)*nside)**2] = 0
+                
                 mask_ud = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=-1)
                 mask_ud[mask_ud != 0] = 1
                 self.filter_lst.append(1 - mask_ud)
 
-    def filter_vec(self, k, x):
+            # Make rl for each component
+            eps = 0.2  # beam at lmax
+            self.inv_rlm_list = []
+            self.rlm_list = []
+            for k in range(self.system.comp_count):
+                lmax = self.system.lmax_list[k]
+                ls = np.arange(lmax + 1)
+                sigma = np.sqrt(-2. * np.log(eps) / lmax / (lmax + 1))
+                inv_rl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
+                inv_rl[:] = 1
+                
+                self.inv_rlm_list.append(scatter_l_to_lm(inv_rl))
+                self.rlm_list.append(scatter_l_to_lm(1. / inv_rl))
+
+    def filter_vec(self, k, x, neg=False):
         # Applies a mask filter for component k to vector x
         f = self.filter_lst[k]
+        if neg:
+            f = 1 - f
         return sharp.sh_analysis(self.system.lmax_list[k], sharp.sh_synthesis(nside_of(f), x) * f)
 
+    def filter(self, x_lst, neg=False):
+        return [self.filter_vec(k, x_lst[k], neg) for k in range(self.system.comp_count)]
+    
     def solve_under_mask(self, r_h_lst):
+        return [1e0 * x for x in  r_h_lst]
+        #return r_h_lst
         c_h_lst = []
         for k in range(self.system.comp_count):
             # restrict
-            r_H = self.filter_vec(k, r_h_lst[k])
+            r_H = self.filter_vec(k, self.rlm_list[k] * r_h_lst[k])
 
             # solve
-            r_H *= scatter_l_to_lm(1 / self.system.dl_list[k][:self.system.lmax_list[k] + 1])
+            r_H *= self.inv_rlm_list[k]**2
 
             # prolong
-            c_h = self.filter_vec(k, r_H)
+            c_h = self.filter_vec(k, r_H) * self.rlm_list[k]
             c_h_lst.append(c_h)
         return c_h_lst
 
@@ -212,9 +243,17 @@ class PsuedoInverseWithMaskPreconditioner(object):
         if self.system.mask is None:
             return self.psuedo_inv.apply(b_lst)
         else:
-            return self.apply_MG_V(b_lst)
-            #return self.apply_schwarz(b_lst)
-            #return self.apply_bnn(b_lst)
+            if self.method == 'add':
+                x_lst = self.apply_schwarz(b_lst)
+            elif self.method == 'v':
+                x_lst = self.apply_MG_V(b_lst)
+            elif self.method == 'v2':
+                x_lst = self.apply_MG_V2(b_lst)
+            elif self.method == 'maskonly':
+                x_lst = self.solve_under_mask(b_lst)
+            else:
+                raise ValueError('unknown method')
+            return x_lst
 
     def apply_schwarz(self, b_lst):
         x_lst = self.psuedo_inv.apply(b_lst)
@@ -236,18 +275,48 @@ class PsuedoInverseWithMaskPreconditioner(object):
 
     def apply_MG_V(self, b_lst):
 
-        x_lst = self.psuedo_inv.apply(b_lst)
+        def M1(u_lst):
+            #return self.psuedo_inv.apply(u_lst)
+            return self.filter(self.psuedo_inv.apply(self.filter(u_lst, neg=True)), neg=True)
+
+        def M2(u_lst):
+            return u_lst
+
+        #M1, M2 = M2, M1
+
+        x_lst = M1(b_lst)
 
         # r = b - A x
-        r_lst = lstsub(b_lst, self.system.matvec_scalar_mixing(x_lst))
-        c_lst = self.solve_under_mask(r_lst)
+        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
+        c_lst = M2(r_lst)
         # x = x + Mdata r
         x_lst = lstadd(x_lst, c_lst)
 
 
         # r = b - A x
-        r_lst = lstsub(b_lst, self.system.matvec_scalar_mixing(x_lst))
+        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
+        c_lst = M1(r_lst)
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, c_lst)
+
+
+
+        return x_lst
+
+    def apply_MG_V2(self, b_lst):
+
+        x_lst = b_lst #self.solve_under_mask(b_lst)
+        #print len(x_lst)
+        # r = b - A x
+        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
         c_lst = self.psuedo_inv.apply(r_lst)
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, c_lst)
+
+
+        # r = b - A x
+        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
+        c_lst = r_lst #self.solve_under_mask(r_lst)
         # x = x + Mdata r
         x_lst = lstadd(x_lst, c_lst)
 

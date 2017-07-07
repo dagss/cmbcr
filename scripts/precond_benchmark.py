@@ -7,17 +7,22 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 
+
 import cmbcr
 import cmbcr.utils
 reload(cmbcr.beams)
 reload(cmbcr.cr_system)
 reload(cmbcr.precond_sh)
 reload(cmbcr.precond_psuedoinv)
+reload(cmbcr.precond_diag)
 reload(cmbcr.precond_pixel)
 reload(cmbcr.utils)
 reload(cmbcr.multilevel)
 reload(cmbcr)
 from cmbcr.utils import *
+
+from cmbcr import sharp
+from healpy import mollzoom, mollview
 
 #reload(cmbcr.main)
 
@@ -26,13 +31,14 @@ from cmbcr.cg import cg_generator
 
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
-nside = 128
+nside = 64
+factor = 2048 // nside
 
 full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
 
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, 0.05)
+system = cmbcr.downgrade_system(full_res_system, 1. / factor)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -69,7 +75,7 @@ Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
-    scatter_l_to_lm(1. / system.dl_list[k]) *
+    #scatter_l_to_lm(1. / system.dl_list[k]) *
     #scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
@@ -82,7 +88,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=80):
+    def __init__(self, label, style, preconditioner, n=30):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -106,22 +112,28 @@ class Benchmark(object):
             M=lambda x: system.stack(self.preconditioner.apply(system.unstack(x))))
 
         self.err_vecs.append(x0)
-        for i, (x, r, delta_new) in enumerate(solver):
-            print 'it', i
-            if r0 is None:
-                r0 = np.linalg.norm(r)
+        try:
+            for i, (x, r, delta_new) in enumerate(solver):
+                print 'it', i
+                if r0 is None:
+                    r0 = np.linalg.norm(r)
 
-            self.err_vecs.append([x0c - xc for x0c, xc in zip(x0, system.unstack(x))])
-            err = np.linalg.norm(x - x0_stacked) / np.linalg.norm(x0_stacked)
-            self.err_norms.append(err)
-            self.reslst.append(np.linalg.norm(r) / r0)
-            if err < 1e-8 or i >= n:
-                break
+                self.err_vecs.append([x0c - xc for x0c, xc in zip(x0, system.unstack(x))])
+                err = np.linalg.norm(x - x0_stacked) / np.linalg.norm(x0_stacked)
+                self.err_norms.append(err)
+                self.reslst.append(np.linalg.norm(r) / r0)
+                if err < 1e-8 or i >= n:
+                    break
+        except ValueError as e:
+            if 'positive-definite' in str(e):
+                print str(e)
+            else:
+                raise
 
         
         
     def ploterr(self):
-        semilogy(self.err_norms, self.style, label=self.label)
+        fig3.gca().semilogy(self.err_norms, self.style, label=self.label)
 
     def plotscale(self):
         clf()
@@ -191,13 +203,39 @@ if 0:
 
     1/0
 
-diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
+
+if 1:
+    p = cmbcr.PsuedoInversePreconditioner(system)
+    
+    def op(i):
+        u = np.zeros(12*nside**2)
+        u[i] = 1
+        alm = sharp.sh_analysis(system.lmax_list[0], u)
+        alm = p.apply([alm])[0]
+        return sharp.sh_adjoint_analysis(nside, alm)
+
+
+    def doit(i):
+        clf()
+        mollzoom(op(i), fig=gcf().number)
+        draw()
+        
+    #mollzoom(op(0))
+    #draw()
+    doit(4000)
+    1/0
+    
+#diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
 
 benchmarks = [
+    #Benchmark(
+    #    'Diagonal',
+    #    '-o',
+    #    diag_precond_nocouplings),
     Benchmark(
         'Diagonal',
         '-o',
-        diag_precond_nocouplings),
+        cmbcr.DiagonalPreconditioner(system)),
 
 #    Benchmark(
 #        'Diagonal (couplings)',
@@ -217,20 +255,30 @@ benchmarks = [
 #        cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)),
     
     Benchmark(
-        'Psuedo-inverse',
+        'Psuedo-inverse (nomask)',
         '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system),
-        #cmbcr.BlockPreconditioner(
-        #    system,
-        #    cmbcr.PsuedoInversePreconditioner(system),
-        #    diag_precond_nocouplings,
-        #)
+        cmbcr.PsuedoInversePreconditioner(system),
         ),
         
+    Benchmark(
+        'Psuedo-inverse (v)',
+        '-o',
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v'),
+        ),
     ]
 
+#clf()
+fig1.clear()
+fig2.clear()
+fig3.clear()
 
-
+#if 'maps' in sys.argv:
+ma = 100
+mi = -ma
+mollview(sharp.sh_synthesis(nside, benchmarks[1].err_vecs[15][0]), fig=fig1.number, min=mi, max=ma)
+mollview(sharp.sh_synthesis(nside, benchmarks[2].err_vecs[15][0]), fig=fig2.number, min=mi, max=ma)
+#draw()
+#    1/0
     
     
 ## if sys.argv[1] == 'single':
@@ -249,9 +297,13 @@ benchmarks = [
 #draw()
 #1/0
     
-clf()
 for bench in benchmarks:
     bench.ploterr()
-gca().set_ylim((1e-8, 2))
-legend()
-draw()
+fig3.gca().set_ylim((1e-8, 1e4))
+
+
+ion()
+#fig3.legend()
+#fig1.draw()
+#fig2.draw()
+#fig3.draw()
