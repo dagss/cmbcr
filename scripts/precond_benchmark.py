@@ -69,8 +69,8 @@ Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
-    #scatter_l_to_lm(system.dl_list[k]) *
-    scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
+    scatter_l_to_lm(1. / system.dl_list[k]) *
+    #scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
     ]

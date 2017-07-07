@@ -166,63 +166,76 @@ class CrSystem(object):
         self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
 
 
+    def matvec(self, x_lst):
+        assert len(x_lst) == self.comp_count
 
-
-    def matvec(self, x_lst, scalar_mixing=False):
-        with timed('matvec'):
-            assert len(x_lst) == self.comp_count
-
-            if not scalar_mixing:
-                x_pix_lst = [self.plan_outer_lst[k].synthesis(x_lst[k]) for k in range(self.comp_count)]
-                z_pix_lst = [0] * self.comp_count
-            else:
-                z_lst = [0] * self.comp_count
-
-            for nu in range(self.band_count):
-                # Mix components together
-                if scalar_mixing:
-                    y = np.zeros((self.lmax_mixed + 1)**2)
-                else:
-                    y_pix = np.zeros(self.plan_mixed.npix_global)
-                for k in range(self.comp_count):
-                    if scalar_mixing:
-                        y += pad_or_truncate_alm(x_lst[k], self.lmax_mixed) * self.mixing_scalars[nu, k]
-                    else:
-                        u = x_pix_lst[k] * self.mixing_maps_ugrade[nu, k]
-                        u *= self.mixing_maps_ugrade[nu, k]
-                        y_pix += u
-                # Instrumental beam
-                if not scalar_mixing:
-                    y = self.plan_mixed.analysis(y_pix)
-                y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
-                # Inverse noise weighting
-                if self.use_healpix:
-                    u = sharp.sh_synthesis(nside_of(self.ninv_maps[nu]), y)
-                    u *= self.ninv_maps[nu]
-                    y = sharp.sh_adjoint_synthesis(self.lmax_mixed, u)
-                else:
-                    # gauss-legendre mode
-                    u = self.plan_ninv.synthesis(y)
-                    u *= self.ninv_gauss_lst[nu]
-                    y = self.plan_ninv.adjoint_synthesis(u)
-                # Transpose our way out, accumulate result in z_list[icomp];
-                # note that z_list will get result from all bands
-                y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
-                if not scalar_mixing:
-                    y_pix = self.plan_mixed.adjoint_analysis(y)
-                for k in range(self.comp_count):
-                    if scalar_mixing:
-                        z_lst[k] = pad_or_truncate_alm(y, self.lmax_list[k]) * self.mixing_scalars[nu, k]
-                    else:
-                        u = y_pix * self.mixing_maps_ugrade[nu, k]
-                        z_pix_lst[k] += u
-
-            if not scalar_mixing:
-                z_lst = [self.plan_outer_lst[k].adjoint_synthesis(z_pix_lst[k]) for k in range(self.comp_count)]
+        x_pix_lst = [self.plan_outer_lst[k].synthesis(x_lst[k]) for k in range(self.comp_count)]
+        z_pix_lst = [0] * self.comp_count
+        
+        for nu in range(self.band_count):
+            # Mix components together
+            y = np.zeros(self.plan_mixed.npix_global)
             for k in range(self.comp_count):
-                z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
-            return z_lst
+                u = x_pix_lst[k] * self.mixing_maps_ugrade[nu, k]
+                y += u
+            y = self.plan_mixed.analysis(y)
+            # Instrumental beam
+            y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
+            # Inverse noise weighting
+            if self.use_healpix:
+                u = sharp.sh_synthesis(nside_of(self.ninv_maps[nu]), y)
+                u *= self.ninv_maps[nu]
+                y = sharp.sh_adjoint_synthesis(self.lmax_mixed, u)
+            else:
+                # gauss-legendre mode
+                u = self.plan_ninv.synthesis(y)
+                u *= self.ninv_gauss_lst[nu]
+                y = self.plan_ninv.adjoint_synthesis(u)
+            # Transpose our way out, accumulate result in z_list[icomp];
+            # note that z_list will get result from all bands
+            y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
+            y = self.plan_mixed.adjoint_analysis(y)
+            for k in range(self.comp_count):
+                u = y * self.mixing_maps_ugrade[nu, k]
+                z_pix_lst[k] += u
 
+        z_lst = [self.plan_outer_lst[k].adjoint_synthesis(z_pix_lst[k]) for k in range(self.comp_count)]
+                
+        for k in range(self.comp_count):
+            z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
+        return z_lst
+
+
+    def matvec_scalar_mixing(self, x_lst):
+        assert len(x_lst) == self.comp_count
+        z_lst = [0] * self.comp_count
+
+        for nu in range(self.band_count):
+            # Mix components together
+            y = np.zeros((self.lmax_mixed + 1)**2)
+            for k in range(self.comp_count):
+                y += pad_or_truncate_alm(x_lst[k], self.lmax_mixed) * self.mixing_scalars[nu, k]
+            # Instrumental beam
+            y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
+            # Inverse noise weighting
+            if self.use_healpix:
+                u = sharp.sh_synthesis(nside_of(self.ninv_maps[nu]), y)
+                u *= self.ninv_maps[nu]
+                y = sharp.sh_adjoint_synthesis(self.lmax_mixed, u)
+            else:
+                # gauss-legendre mode
+                u = self.plan_ninv.synthesis(y)
+                u *= self.ninv_gauss_lst[nu]
+                y = self.plan_ninv.adjoint_synthesis(u)
+            # Transpose our way out, accumulate result in z_list[icomp];
+            # note that z_list will get result from all bands
+            y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
+            for k in range(self.comp_count):
+                z_lst[k] = pad_or_truncate_alm(y, self.lmax_list[k]) * self.mixing_scalars[nu, k]
+
+        for k in range(self.comp_count):
+            z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
+        return z_lst
 
 
     @classmethod
@@ -284,7 +297,7 @@ class CrSystem(object):
                     #healpy.mollzoom(mask_ext - mask_ud)
                     #1/0
                     
-                    ninv_map *= mask_ud
+                    ninv_map *= mask_ext
 
                 ninv_maps.append(ninv_map)
 
