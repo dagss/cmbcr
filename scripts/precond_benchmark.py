@@ -27,14 +27,12 @@ from cmbcr.cg import cg_generator
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 nside = 128
-factor = nside / 2048.
-print 'factor dg', factor
 
 full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
 
 full_res_system.prepare_prior()
 
-system = cmbcr.downgrade_system(full_res_system, factor)
+system = cmbcr.downgrade_system(full_res_system, 0.05)
 system.prepare_prior()
 
 #full_res_system.plot(lmax=2000)
@@ -71,8 +69,8 @@ Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
-    scatter_l_to_lm(np.sqrt(1 / system.dl_list[k])) *
-    #scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
+    #scatter_l_to_lm(system.dl_list[k]) *
+    scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
     ]
@@ -84,7 +82,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=60):
+    def __init__(self, label, style, preconditioner, n=80):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -222,6 +220,11 @@ benchmarks = [
         'Psuedo-inverse',
         '-o',
         cmbcr.PsuedoInverseWithMaskPreconditioner(system),
+        #cmbcr.BlockPreconditioner(
+        #    system,
+        #    cmbcr.PsuedoInversePreconditioner(system),
+        #    diag_precond_nocouplings,
+        #)
         ),
         
     ]
