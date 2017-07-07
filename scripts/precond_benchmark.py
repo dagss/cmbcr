@@ -202,27 +202,31 @@ if 0:
     draw()
 
     1/0
+    
+method = 'add'
 
-
-if 1:
-    p = cmbcr.PsuedoInversePreconditioner(system)
+if 'op' in sys.argv:
+    #p = cmbcr.PsuedoInversePreconditioner(system)
+    p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
     
     def op(i):
         u = np.zeros(12*nside**2)
         u[i] = 1
+        #return u + 1e-1
         alm = sharp.sh_analysis(system.lmax_list[0], u)
+        #alm = system.matvec([alm])[0]
         alm = p.apply([alm])[0]
         return sharp.sh_adjoint_analysis(nside, alm)
 
 
     def doit(i):
         clf()
-        mollzoom(op(i), fig=gcf().number)
+        mollzoom(np.log10(np.abs(op(i))), fig=gcf().number)
         draw()
         
     #mollzoom(op(0))
     #draw()
-    doit(4000)
+    doit(6*nside**2 + 2 * nside)
     1/0
     
 #diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
@@ -261,22 +265,22 @@ benchmarks = [
         ),
         
     Benchmark(
-        'Psuedo-inverse (v)',
+        'Psuedo-inverse (method)',
         '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v'),
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method),
         ),
     ]
 
 #clf()
-fig1.clear()
-fig2.clear()
-fig3.clear()
+#fig1.clear()
+#fig2.clear()
+#fig3.clear()
 
 #if 'maps' in sys.argv:
-ma = 100
-mi = -ma
-mollview(sharp.sh_synthesis(nside, benchmarks[1].err_vecs[15][0]), fig=fig1.number, min=mi, max=ma)
-mollview(sharp.sh_synthesis(nside, benchmarks[2].err_vecs[15][0]), fig=fig2.number, min=mi, max=ma)
+#ma = 100
+#mi = -ma
+#mollview(sharp.sh_synthesis(nside, benchmarks[1].err_vecs[15][0]), fig=fig1.number, min=mi, max=ma)
+#mollview(sharp.sh_synthesis(nside, benchmarks[2].err_vecs[15][0]), fig=fig2.number, min=mi, max=ma)
 #draw()
 #    1/0
     
@@ -296,6 +300,9 @@ mollview(sharp.sh_synthesis(nside, benchmarks[2].err_vecs[15][0]), fig=fig2.numb
 #    plot(P[i, 0, :])
 #draw()
 #1/0
+
+fig3 = gcf()
+clf()
     
 for bench in benchmarks:
     bench.ploterr()
