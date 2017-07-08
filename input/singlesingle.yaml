@@ -18,10 +18,10 @@ model:
         #l: 2200
         
         type: power
-        beta: -2.5
-        l: 500
+        beta: -0.5
+        l: 4000
 
-        relamp: 1 #0.001
+        relamp: 0.001
         
         #beta: -0.5  #-1.5
         #lcross: 2000

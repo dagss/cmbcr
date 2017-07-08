@@ -29,7 +29,7 @@ def pinv_block_diagonal(blocks):
 def apply_block_diagonal_pinv(system, blocks, x):
 
     lmax = max(system.lmax_list)
-    pad_x = np.zeros(((lmax + 1)**2, system.comp_count + system.band_count), order='F', dtype=np.float32)
+    pad_x = np.zeros(((lmax + 1)**2, system.comp_count + system.band_count), order='F', dtype=np.float64)
 
     for i in range(system.band_count + system.comp_count):
         pad_x[:, i] = pad_or_truncate_alm(x[i], lmax)
@@ -45,7 +45,7 @@ def apply_block_diagonal_pinv(system, blocks, x):
 
 def apply_block_diagonal_pinv_transpose(system, blocks, x):
     lmax = max(system.lmax_list)
-    pad_x = np.zeros(((lmax + 1)**2, system.comp_count + system.band_count), order='F', dtype=np.float32)
+    pad_x = np.zeros(((lmax + 1)**2, system.comp_count + system.band_count), order='F', dtype=np.float64)
 
     for k in range(system.comp_count):
         pad_x[:, k] = pad_or_truncate_alm(x[k], lmax)
@@ -59,16 +59,22 @@ def apply_block_diagonal_pinv_transpose(system, blocks, x):
 
 def create_mixing_matrix(system, lmax, alpha_lst):
     bl_arr = np.zeros((system.band_count, lmax + 1), order='F')
-    sqrt_invCl_arr = np.zeros((system.comp_count, lmax + 1), order='F')
+    wl_arr = np.zeros((system.comp_count, lmax + 1), order='F')
+    dl_arr = np.zeros((system.comp_count, lmax + 1), order='F')
 
     for k in range(system.comp_count):
-        sqrt_invCl_arr[k, :] = pad_or_trunc(np.sqrt(system.dl_list[k]), lmax + 1)
+        wl_arr[k, :] = pad_or_trunc(np.sqrt(system.wl_list[k]), lmax + 1)
+        dl_arr[k, :] = pad_or_trunc(np.sqrt(system.dl_list[k]), lmax + 1)
+        
     for nu in range(system.band_count):
         bl_arr[nu, :] = pad_or_trunc(system.bl_list[nu], lmax + 1)
 
     U = compsep_assemble_U(
         lmax_per_comp=system.lmax_list,
-        mixing_scalars=system.mixing_scalars.copy('F'), bl=bl_arr, sqrt_Cl=sqrt_invCl_arr,
+        mixing_scalars=system.mixing_scalars.copy('F'),
+        bl=bl_arr,
+        dl=dl_arr,
+        wl=wl_arr,
         alpha=np.asarray(alpha_lst, order='F'))
 
     return U
@@ -208,18 +214,17 @@ class PsuedoInverseWithMaskPreconditioner(object):
         return [self.filter_vec(k, x_lst[k], neg) for k in range(self.system.comp_count)]
     
     def solve_under_mask(self, r_h_lst):
-        return [1e0 * x for x in  r_h_lst]
-        #return r_h_lst
         c_h_lst = []
         for k in range(self.system.comp_count):
             # restrict
-            r_H = self.filter_vec(k, self.rlm_list[k] * r_h_lst[k])
+            r_H = r_h_lst[k] ###self.filter_vec(k, self.rlm_list[k] * r_h_lst[k])
 
             # solve
-            r_H *= self.inv_rlm_list[k]**2
+            r_H *= (1. / scatter_l_to_lm(self.system.dl_list[k]))# self.inv_rlm_list[k]**2
 
             # prolong
-            c_h = self.filter_vec(k, r_H) * self.rlm_list[k]
+            ###c_h = self.filter_vec(k, r_H) * self.rlm_list[k]
+            c_h = r_H
             c_h_lst.append(c_h)
         return c_h_lst
 
@@ -281,10 +286,21 @@ class PsuedoInverseWithMaskPreconditioner(object):
 
         def M2(u_lst):
             return u_lst
+            return self.solve_under_mask(u_lst)
 
         #M1, M2 = M2, M1
 
+        #return lstadd(
+        #    #self.filter(M1(self.filter(b_lst, neg=True)), neg=True),
+        #    M1(b_lst),
+        #    self.filter(M2(self.filter(b_lst, neg=False)), neg=False))
+            
+
+        #return lstadd(M1(b_lst), M2(b_lst)) #M1(b_lst) + M2(b_lst)
         x_lst = M1(b_lst)
+        return x_lst
+        return lstadd(x_lst, M2(b_lst))
+        #return x_lst
 
         # r = b - A x
         r_lst = lstsub(b_lst, self.system.matvec(x_lst))
@@ -292,7 +308,7 @@ class PsuedoInverseWithMaskPreconditioner(object):
         # x = x + Mdata r
         x_lst = lstadd(x_lst, c_lst)
 
-
+        #return x_lst
         # r = b - A x
         r_lst = lstsub(b_lst, self.system.matvec(x_lst))
         c_lst = M1(r_lst)

@@ -36,11 +36,11 @@ def compute_diagonal_preconditioner(self):
             A_diag_lst[k] += (
                 pad_or_truncate_alm(Ni_diag, system.lmax_list[k])
                 * system.mixing_scalars[nu, k]**2
-                * scatter_l_to_lm(1 / system.dl_list[k])
+                * scatter_l_to_lm(system.wl_list[k])
                 )
 
     for k, x in enumerate(A_diag_lst):
-        x += 1.0 #scatter_l_to_lm(system.dl_list[k]) #1.0
+        x += scatter_l_to_lm(system.dl_list[k])
             
     return [1. / x for x in A_diag_lst]
 

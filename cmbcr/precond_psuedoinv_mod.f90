@@ -7,13 +7,13 @@ module precond_psuedoinv_mod
 
 contains
 
-  subroutine compsep_assemble_U(nobs, ncomp, lmax, lmax_per_comp, mixing_scalars, bl, sqrt_invCl, alpha, U) bind(c)
+  subroutine compsep_assemble_U(nobs, ncomp, lmax, lmax_per_comp, mixing_scalars, bl, wl, dl, alpha, U) bind(c)
     integer(i4b), value :: nobs, ncomp, lmax
     integer(i4b), dimension(ncomp) :: lmax_per_comp
-    real(sp), dimension(nobs + ncomp, ncomp, 0:lmax) :: U
+    real(dp), dimension(nobs + ncomp, ncomp, 0:lmax) :: U
     real(dp), dimension(nobs, ncomp) :: mixing_scalars
     real(dp), dimension(nobs, 0:lmax) :: bl
-    real(dp), dimension(ncomp, 0:lmax) :: sqrt_invCl
+    real(dp), dimension(ncomp, 0:lmax) :: wl, dl
     real(dp), dimension(nobs) :: alpha
     !--
     integer(i4b) :: l, k, nu
@@ -22,17 +22,17 @@ contains
        do k = 1, ncomp
           do nu = 1, nobs
              if (l .le. lmax_per_comp(k)) then
-                U(nu, k, l) = real(mixing_scalars(nu, k) * bl(nu, l) * alpha(nu) / sqrt_invCl(k, l), kind=sp)
+                U(nu, k, l) = real(mixing_scalars(nu, k) * bl(nu, l) * alpha(nu) * wl(k, l), kind=dp)
              else
                 ! We need to specifically truncate components as there is no function of
                 ! (k, l) above. For bands this is handled implicitly by bl(nu, l) being
                 ! zero.
-                U(nu, k, l) = 0_sp
+                U(nu, k, l) = 0_dp
              end if
           end do
-          U(nobs + k, :, l) = 0_sp
+          U(nobs + k, :, l) = 0_dp
           if (l .le. lmax_per_comp(k)) then
-             U(nobs + k, k, l) = 1_sp !real(sqrt_invCl(k, l), kind=sp)
+             U(nobs + k, k, l) = dl(k, l)
           end if
        end do
 
@@ -52,12 +52,12 @@ contains
   ! (transpose=0) or output (transpose=1)
   subroutine compsep_apply_U_block_diagonal(nobs, ncomp, lmax, transpose, blocks, x) bind(c)
     integer(i4b), value :: nobs, ncomp, lmax, transpose
-    real(sp), dimension(1:(nobs + ncomp), 1:ncomp, 0:lmax) :: blocks
-    real(sp), dimension(1:(lmax + 1)**2, ncomp + nobs) :: x
+    real(dp), dimension(1:(nobs + ncomp), 1:ncomp, 0:lmax) :: blocks
+    real(dp), dimension(1:(lmax + 1)**2, ncomp + nobs) :: x
     !--
 
-    real(sp), dimension(ncomp) :: col_buf
-    real(sp), dimension(nobs + ncomp) :: row_buf
+    real(dp), dimension(ncomp) :: col_buf
+    real(dp), dimension(nobs + ncomp) :: row_buf
     integer(i4b) :: idx, l, m, neg
 
     if (transpose == 0) then

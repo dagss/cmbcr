@@ -31,15 +31,18 @@ from cmbcr.cg import cg_generator
 
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
-nside = 64
+nside = 16 #128#64
 factor = 2048 // nside
+#factor = 0.01
 
 full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
 
 full_res_system.prepare_prior()
 
 system = cmbcr.downgrade_system(full_res_system, 1. / factor)
-system.prepare_prior()
+
+#print system.dl_list
+#1/0
 
 #full_res_system.plot(lmax=2000)
 #system.plot(lmax=200)
@@ -56,7 +59,7 @@ system.set_params(
     rot_ang=rot_ang,
     flat_mixing=False,
     )
-system.prepare_prior()
+system.prepare_prior(unity=False)
 system.prepare(use_healpix=True)
 
 
@@ -88,7 +91,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=30):
+    def __init__(self, label, style, preconditioner, n=160):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -125,10 +128,13 @@ class Benchmark(object):
                 if err < 1e-8 or i >= n:
                     break
         except ValueError as e:
-            if 'positive-definite' in str(e):
-                print str(e)
-            else:
-                raise
+            #if 'positive-definite' in str(e):
+            print str(e)
+        except AssertionError as e:
+            print str(e)
+            
+            #else:
+            #    raise
 
         
         
@@ -177,16 +183,6 @@ class Benchmark(object):
 
 
 if 0:
-    A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
-    M = hammer(lambda x: system.stack(diag_precond.apply(system.unstack(x))), system.x_offsets[-1])
-    clf()
-    semilogy(A.diagonal(), '-o', label='A')
-    semilogy(1 / M.diagonal(), '-o', label='M')
-    legend()
-    draw()
-    1/0
-
-if 0:
     clf()
     for i in range(system.band_count):
         alpha = 1
@@ -203,8 +199,20 @@ if 0:
 
     1/0
     
-method = 'add'
+method = 'v'
 
+if 'eig' in sys.argv:
+    p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
+    #A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
+    M = hammer(lambda x: system.stack(p.apply(system.unstack(x))), system.x_offsets[-1])
+    #clf()
+    #semilogy(A.diagonal(), '-o', label='A')
+    semilogy(np.abs(np.linalg.eigvalsh(M)), '-', label='M')
+    gca().set_ylim((1e-5, 1e2))
+    legend()
+    draw()
+    1/0
+    
 if 'op' in sys.argv:
     #p = cmbcr.PsuedoInversePreconditioner(system)
     p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
@@ -221,12 +229,15 @@ if 'op' in sys.argv:
 
     def doit(i):
         clf()
-        mollzoom(np.log10(np.abs(op(i))), fig=gcf().number)
+        u = op(i)
+        #u = np.log10(np.abs(u))
+        mollzoom(u, fig=gcf().number)
         draw()
         
     #mollzoom(op(0))
     #draw()
-    doit(6*nside**2 + 2 * nside)
+    doit(100)
+    #doit(6*nside**2 + 2 * nside)
     1/0
     
 #diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
@@ -265,10 +276,15 @@ benchmarks = [
         ),
         
     Benchmark(
-        'Psuedo-inverse (method)',
+        'Psuedo-inverse (v)',
         '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method),
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v'),
         ),
+    #Benchmark(
+    #    'Psuedo-inverse (add)',
+    #    '-o',
+    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add'),
+    #    ),
     ]
 
 #clf()
@@ -308,7 +324,7 @@ for bench in benchmarks:
     bench.ploterr()
 fig3.gca().set_ylim((1e-8, 1e4))
 
-
+legend()
 ion()
 #fig3.legend()
 #fig1.draw()
