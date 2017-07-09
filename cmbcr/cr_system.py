@@ -135,10 +135,10 @@ class CrSystem(object):
         for nu in range(self.band_count):
             for k in range(self.comp_count):
                 q = self.mixing_maps[nu, k]
-                self.mixing_scalars[nu, k] = self.mixing_maps[nu, k].mean()
+                self.mixing_scalars[nu, k] = (q[q != 0]).mean()
                 #self.mixing_scalars[nu, k] = (q**2).sum() / q.sum()
         #print self.mixing_scalars
-        self.mixing_scalars[:, :] = 1
+        
 
         # Estimates of Ni level for prior construction in demos; *note* that we *include* component_scale
         # here...
@@ -155,6 +155,7 @@ class CrSystem(object):
         self.Cl_list = []
         for k in range(self.comp_count):
             Cl = self.prior_list[k].get_Cl(self, k)
+            self.Cl_list.append(Cl)
             if unity:
                 self.dl_list.append(np.ones(self.lmax_list[k] + 1))
                 self.wl_list.append(np.sqrt(Cl))
@@ -163,6 +164,10 @@ class CrSystem(object):
                 self.wl_list.append(np.ones(self.lmax_list[k] + 1))
 
     def prepare(self, use_healpix=False):
+        ## TODO DEBUG
+        #for bl in self.bl_list:
+        #    bl[:] = 1
+        ## END DEBUG
         # Make G-L ninv-maps, possibly rotated
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
@@ -181,7 +186,7 @@ class CrSystem(object):
         # computed in this routine are changed
         ## self.component_scale = np.ones(self.comp_count) # DEBUG
 
-        self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
+        self.component_scale = np.array([1])#1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
 
         self.mixing_scalars *= self.component_scale[None, :]
         for k in range(self.comp_count):
@@ -195,6 +200,7 @@ class CrSystem(object):
                     self.mixing_maps_ugrade[nu, k] = (
                         rotate_mixing(self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
                         * self.component_scale[k])
+                    self.mixing_maps[nu, k] *= self.component_scale[k]
                     if self.flat_mixing:
                         assert False
                         self.mixing_maps_ugrade[nu, k][:] = self.mixing_maps_ugrade[nu, k].mean()
@@ -208,19 +214,20 @@ class CrSystem(object):
     def matvec(self, x_lst):
         assert len(x_lst) == self.comp_count
 
+        nside_mixing = nside_of(self.mixing_maps[0, 0])
         x_pix_lst = [
-            self.plan_outer_lst[k].synthesis(
+            sharp.sh_synthesis(nside_mixing,
                 x_lst[k] * scatter_l_to_lm(self.wl_list[k])
             ) for k in range(self.comp_count)]
         z_pix_lst = [0] * self.comp_count
 
         for nu in range(self.band_count):
             # Mix components together
-            y = np.zeros(self.plan_mixed.npix_global)
+            y = np.zeros(self.mixing_maps[0,0].shape[0])
             for k in range(self.comp_count):
-                u = x_pix_lst[k] * self.mixing_maps_ugrade[nu, k]
+                u = x_pix_lst[k] * self.mixing_maps[nu, k]
                 y += u
-            y = self.plan_mixed.analysis(y)
+            y = sharp.sh_analysis(self.lmax_mixed, y) #self.plan_mixed.analysis(y)
             # Instrumental beam
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
             # Inverse noise weighting
@@ -236,13 +243,13 @@ class CrSystem(object):
             # Transpose our way out, accumulate result in z_list[icomp];
             # note that z_list will get result from all bands
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
-            y = self.plan_mixed.adjoint_analysis(y)
+            y = sharp.sh_adjoint_analysis(nside_mixing, y) #self.plan_mixed.adjoint_analysis(y)
             for k in range(self.comp_count):
-                u = y * self.mixing_maps_ugrade[nu, k]
+                u = y * self.mixing_maps[nu, k]
                 z_pix_lst[k] += u
 
         z_lst = [
-            self.plan_outer_lst[k].adjoint_synthesis(z_pix_lst[k])
+            sharp.sh_adjoint_synthesis(self.lmax_list[k], z_pix_lst[k])
              * scatter_l_to_lm(self.wl_list[k])
             for k in range(self.comp_count)
             ]
@@ -324,6 +331,7 @@ class CrSystem(object):
 
                 alpha = np.percentile(rms, rms_treshold)
                 rms[rms < alpha] = alpha
+                rms[:] = rms.mean()  ## DEBUG
                 ninv_map = 1 / rms**2
 
                 # We don't deal with the mask before precompute, because if the system is downscaled

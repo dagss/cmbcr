@@ -31,9 +31,13 @@ from cmbcr.cg import cg_generator
 
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
-nside = 16 #128#64
-factor = 2048 // nside
-#factor = 0.01
+
+w = 1
+
+nside = 8 * w
+factor = 2048 // nside * w
+
+
 
 full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
 
@@ -59,7 +63,9 @@ system.set_params(
     rot_ang=rot_ang,
     flat_mixing=False,
     )
-system.prepare_prior(unity=False)
+
+unity = 'unity' in sys.argv
+system.prepare_prior(unity=unity)
 system.prepare(use_healpix=True)
 
 
@@ -91,7 +97,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=160):
+    def __init__(self, label, style, preconditioner, n=100):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -201,14 +207,31 @@ if 0:
     
 method = 'v'
 
+if 'plot' in sys.argv:
+    clf()
+    system.plot()
+    1/0
+
+if 'pixmat' in sys.argv:
+    def op(u):
+        alm = sharp.sh_analysis(system.lmax_list[0], u)
+        alm = system.matvec([alm])[0]
+        return sharp.sh_adjoint_analysis(nside, alm)
+    A = hammer(op, 12 * nside**2)
+    clf()
+    imshow(A, interpolation='none')
+    draw()
+    
 if 'eig' in sys.argv:
     p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
-    #A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
+    A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
     M = hammer(lambda x: system.stack(p.apply(system.unstack(x))), system.x_offsets[-1])
-    #clf()
-    #semilogy(A.diagonal(), '-o', label='A')
-    semilogy(np.abs(np.linalg.eigvalsh(M)), '-', label='M')
-    gca().set_ylim((1e-5, 1e2))
+    clf()
+    from scipy.linalg import eigvalsh, eigvals
+    semilogy(np.abs(eigvalsh(A)), '-', label='A')
+    semilogy(np.abs(eigvalsh(M))[::-1], '-', label='M')
+    semilogy(sorted(np.abs(eigvals(np.dot(M, A)))), '-', label='MA^-1')
+    gca().set_ylim((1e-5, 1e8))
     legend()
     draw()
     1/0
@@ -217,27 +240,43 @@ if 'op' in sys.argv:
     #p = cmbcr.PsuedoInversePreconditioner(system)
     p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
     
-    def op(i):
+    def op(f, i):
         u = np.zeros(12*nside**2)
         u[i] = 1
         #return u + 1e-1
         alm = sharp.sh_analysis(system.lmax_list[0], u)
         #alm = system.matvec([alm])[0]
-        alm = p.apply([alm])[0]
+        alm = f([alm])[0]
         return sharp.sh_adjoint_analysis(nside, alm)
 
 
     def doit(i):
         clf()
-        u = op(i)
+        u = op(p.apply, i)
         #u = np.log10(np.abs(u))
-        mollzoom(u, fig=gcf().number)
-        draw()
+        mollview(u, fig=gcf().number, sub=211)
+
+        def q(x):
+            if unity:
+                x = [x[0] * scatter_l_to_lm(1 / system.wl_list[0])]
+                x = system.matvec(x)
+                x = [x[0] * scatter_l_to_lm(1 / system.wl_list[0])]
+                return x
+            else:
+                x = system.matvec(x)
+            return x
+                
         
-    #mollzoom(op(0))
-    #draw()
-    doit(100)
-    #doit(6*nside**2 + 2 * nside)
+        u = op(q, i)
+        #u = np.log10(np.abs(u))
+        mollview(u, fig=gcf().number, sub=212)
+        draw()
+
+    t = 8
+    if 'up' in sys.argv:
+        doit(6*nside**2 + 2 * nside - t * 4 * nside)
+    else:
+        doit(6*nside**2 + 2 * nside + t * 4 * nside)
     1/0
     
 #diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)

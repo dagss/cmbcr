@@ -220,7 +220,7 @@ class PsuedoInverseWithMaskPreconditioner(object):
             r_H = r_h_lst[k] ###self.filter_vec(k, self.rlm_list[k] * r_h_lst[k])
 
             # solve
-            r_H *= (1. / scatter_l_to_lm(self.system.dl_list[k]))# self.inv_rlm_list[k]**2
+            r_H *= (1. / scatter_l_to_lm(self.system.dl_list[k])) # self.inv_rlm_list[k]**2
 
             # prolong
             ###c_h = self.filter_vec(k, r_H) * self.rlm_list[k]
@@ -286,20 +286,24 @@ class PsuedoInverseWithMaskPreconditioner(object):
 
         def M2(u_lst):
             return u_lst
-            return self.solve_under_mask(u_lst)
+            #return self.solve_under_mask(u_lst)
 
         #M1, M2 = M2, M1
 
-        #return lstadd(
-        #    #self.filter(M1(self.filter(b_lst, neg=True)), neg=True),
-        #    M1(b_lst),
-        #    self.filter(M2(self.filter(b_lst, neg=False)), neg=False))
+        return lstadd(
+            self.filter(M1(self.filter(b_lst, neg=True)), neg=True),
+            #M1(b_lst),
+            self.filter(M2(self.filter(b_lst, neg=False)), neg=False))
             
 
         #return lstadd(M1(b_lst), M2(b_lst)) #M1(b_lst) + M2(b_lst)
         x_lst = M1(b_lst)
         return x_lst
-        return lstadd(x_lst, M2(b_lst))
+
+
+
+    
+        #return lstadd(x_lst, M2(b_lst))
         #return x_lst
 
         # r = b - A x

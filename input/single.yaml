@@ -1,4 +1,4 @@
-
+X
 model:
   mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
 

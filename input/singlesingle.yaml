@@ -6,7 +6,7 @@ model:
 
   components:
     - name: cmb
-      lmax: 4000
+      lmax: 6000
       mixmat: '06'
       prior:
         #type: gaussian
@@ -18,10 +18,10 @@ model:
         #l: 2200
         
         type: power
-        beta: -0.5
-        l: 4000
+        beta: -1.5
+        l: 2900
 
-        relamp: 0.001
+        relamp: 1
         
         #beta: -0.5  #-1.5
         #lcross: 2000
