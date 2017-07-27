@@ -125,6 +125,10 @@ else:
 cdef double sqrt_one_half = np.sqrt(.5), sqrt_two = np.sqrt(2)
 cdef double pi = np.pi
 
+# used for profiling purposes..
+sht_count = 0
+
+
 def _mirror_weights(weights, nside, nrings, ring_start, ring_stop):
     """
     Take weights provided for the northern hemisphere and mirror
@@ -195,6 +199,8 @@ cdef class BaseRealMmajorPlan:
             sharp_destroy_geom_info(self.geom_info)
 
     cdef _execute(self, sharp_jobtype jobtype, void *alm, void *map):
+        global sht_count
+        sht_count += 1
         if self.use_mpi:
             raise NotImplementedError()
             ## sharp_execute_mpi(self.comm, jobtype, 0, &alm, &map, self.geom_info,

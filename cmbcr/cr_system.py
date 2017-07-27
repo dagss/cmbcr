@@ -44,22 +44,19 @@ class HarmonicPrior(object):
 
     def downgrade(self, fraction):
         spec = dict(self.spec)
-        t = self.spec['type']
-        if t == 'power':
-            spec.update(l=int(self.spec['l'] * fraction + 1))
-        elif t == 'gaussian':
-            spec.update(l_eps=int(self.spec['l_eps'] * fraction + 1))
-        elif t == 'file':
-            spec.update(l=int(self.spec['l'] * fraction + 1))
-        return HarmonicPrior(lmax=int(self.lmax * fraction + 1), spec=spec)
+        spec.pop('l', None)  # if you use l-based spec, crash..
+        spec.pop('l_eps', None)  # if you use l-based spec, crash, until these are fixed
+        return HarmonicPrior(lmax=int(self.lmax * fraction + 1), spec=dict(self.spec))
 
     def get_Cl(self, system, k):
         t = self.spec['type']
         if t == 'power':
             l = np.arange(1, self.lmax + 2, dtype=np.float)
 
-            amplitude = 1. / system.ni_approx_by_comp_lst[k][self.spec['l']]
-            Cl = amplitude * (l / (self.spec['l'] + 1))**self.spec['beta']
+            nl = system.ni_approx_by_comp_lst[k]
+            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
+            amplitude = 1. / nl[l_cross]
+            Cl = amplitude * (l / l_cross)**self.spec['beta']
         elif t == 'file':
             dat = np.loadtxt(self.spec['filename'])
             assert dat[0,0] == 0 and dat[1,0] == 1 and dat[2,0] == 2
@@ -80,8 +77,6 @@ class HarmonicPrior(object):
             leps = self.spec['l_eps']
             sigma = np.sqrt(-2. * np.log(self.spec['eps']) / leps / (leps + 1))
             dl = np.exp(0.5 * ls * (ls + 1) * sigma**2)
-
-        Cl *= self.spec.get('relamp', 1.0)
 
         return Cl
 
@@ -138,7 +133,7 @@ class CrSystem(object):
                 self.mixing_scalars[nu, k] = (q[q != 0]).mean()
                 #self.mixing_scalars[nu, k] = (q**2).sum() / q.sum()
         #print self.mixing_scalars
-        
+
 
         # Estimates of Ni level for prior construction in demos; *note* that we *include* component_scale
         # here...
@@ -153,6 +148,7 @@ class CrSystem(object):
         self.dl_list = []
         self.wl_list = []
         self.Cl_list = []
+        self.unity = unity
         for k in range(self.comp_count):
             Cl = self.prior_list[k].get_Cl(self, k)
             self.Cl_list.append(Cl)
@@ -210,8 +206,14 @@ class CrSystem(object):
             for lmax in self.lmax_list]
         self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
 
+    def matvec_pix(self, x_lst):
+        assert self.unity
+        # Seperate routine for pixel-domain matvec where we take lmax \to \infty
+        # in order to
+        1/0
 
-    def matvec(self, x_lst):
+
+    def matvec(self, x_lst, skip_prior=False):
         assert len(x_lst) == self.comp_count
 
         nside_mixing = nside_of(self.mixing_maps[0, 0])
@@ -254,8 +256,9 @@ class CrSystem(object):
             for k in range(self.comp_count)
             ]
 
-        for k in range(self.comp_count):
-            z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
+        if not skip_prior:
+            for k in range(self.comp_count):
+                z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
         return z_lst
 
 
@@ -304,9 +307,9 @@ class CrSystem(object):
         if mask:
             mask = load_map_cached(mask)
             mask = mask.copy()
-            mask[:] = 1
-            nside = nside_of(mask)
-            mask[6*nside**2:12*nside**2] = 0
+            #mask[:] = 1
+            #nside = nside_of(mask)
+            #mask[6*nside**2:12*nside**2] = 0
         else:
             mask = None
 
@@ -331,7 +334,6 @@ class CrSystem(object):
 
                 alpha = np.percentile(rms, rms_treshold)
                 rms[rms < alpha] = alpha
-                rms[:] = rms.mean()  ## DEBUG
                 ninv_map = 1 / rms**2
 
                 # We don't deal with the mask before precompute, because if the system is downscaled
@@ -343,19 +345,15 @@ class CrSystem(object):
                     mask_ud = healpy.ud_grade(mask, nside, order_in='RING', order_out='RING', power=-1)
                     mask_ud[mask_ud != 0] = 1
 
-                    mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
-                    from .beams import gaussian_beam_by_l
-                    mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '10 deg'))
-                    ## mask_eps = 0.5
-                    ## #mask_lm *= scatter_l_to_lm(bl[:3 * nside + 1]**2)
-                    mask_ext = sharp.sh_synthesis(nside, mask_lm)
-                    ## mask_ext[mask_ext <= mask_eps] = 0
-                    ## mask_ext[mask_ext > mask_eps] = 1
+                    #mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
+                    #from .beams import gaussian_beam_by_l
+                    #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '10 deg'))
+                    #mask_ext = sharp.sh_synthesis(nside, mask_lm)
 
                     #healpy.mollzoom(mask_ext - mask_ud)
                     #1/0
 
-                    ninv_map *= mask_ext
+                    ninv_map *= mask_ud
 
                 ninv_maps.append(ninv_map)
 
@@ -363,10 +361,9 @@ class CrSystem(object):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
                     if mask is not None:
-                        mask_ud = healpy.ud_grade(mask, nside_of(mixing_maps[nu, k]), order_in='RING', order_out='RING', power=-1)
+                        mask_ud = healpy.ud_grade(mask, nside_of(mixing_maps[nu, k]), order_in='RING', order_out='RING', power=0)
                         mask_ud[mask_ud != 0] = 1
                         mixing_maps[nu, k] *= mask_ud
-
 
                 nu += 1
 

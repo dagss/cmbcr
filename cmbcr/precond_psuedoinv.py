@@ -141,6 +141,7 @@ class PsuedoInversePreconditioner(object):
         else:
             self.inv_inv_maps = [make_inv_map(x) for x in system.ninv_gauss_lst]
 
+
     def apply(self, x_lst):
         x_lst = apply_block_diagonal_pinv_transpose(self.system, self.Uplus, x_lst)
         c_h = []
@@ -179,29 +180,11 @@ class PsuedoInverseWithMaskPreconditioner(object):
                 while nside < lmax:
                     nside *= 2
                 #nside //= 2
-                mask_ud = np.zeros(12 * nside**2)
-
-                #mask_ud[:] = 1
-                #d = 0
-                #mask_ud[int((2 - d)*nside**2):int((10 + d)*nside)**2] = 0
-                
-                mask_ud = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=-1)
-                mask_ud[mask_ud != 0] = 1
+                from healpy import mollzoom
+                mask_ud = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=0)
+                # Tested out a few options here, but seems like having a mask with 0.5, 0.25, etc on the border
+                # was the best choice
                 self.filter_lst.append(1 - mask_ud)
-
-            # Make rl for each component
-            eps = 0.2  # beam at lmax
-            self.inv_rlm_list = []
-            self.rlm_list = []
-            for k in range(self.system.comp_count):
-                lmax = self.system.lmax_list[k]
-                ls = np.arange(lmax + 1)
-                sigma = np.sqrt(-2. * np.log(eps) / lmax / (lmax + 1))
-                inv_rl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
-                inv_rl[:] = 1
-                
-                self.inv_rlm_list.append(scatter_l_to_lm(inv_rl))
-                self.rlm_list.append(scatter_l_to_lm(1. / inv_rl))
 
     def filter_vec(self, k, x, neg=False):
         # Applies a mask filter for component k to vector x
@@ -214,132 +197,138 @@ class PsuedoInverseWithMaskPreconditioner(object):
         return [self.filter_vec(k, x_lst[k], neg) for k in range(self.system.comp_count)]
     
     def solve_under_mask(self, r_h_lst):
+        if self.system.unity:
+            return r_h_lst
         c_h_lst = []
         for k in range(self.system.comp_count):
-            # restrict
-            r_H = r_h_lst[k] ###self.filter_vec(k, self.rlm_list[k] * r_h_lst[k])
+            r_H = r_h_lst[k]
 
             # solve
-            r_H *= (1. / scatter_l_to_lm(self.system.dl_list[k])) # self.inv_rlm_list[k]**2
+            r_H *= (1. / scatter_l_to_lm(self.system.dl_list[k]))
 
             # prolong
-            ###c_h = self.filter_vec(k, r_H) * self.rlm_list[k]
             c_h = r_H
             c_h_lst.append(c_h)
         return c_h_lst
 
-    def apply_Pt_2(self, x_lst):
-        return lstsub(x_lst, self.solve_under_mask(self.system.matvec(x_lst, scalar_mixing=True)))
+    def M1(self, u_lst):
+        return self.filter(self.psuedo_inv.apply(self.filter(u_lst, neg=True)), neg=True)
 
-    def apply_P_2(self, x_lst):
-        return lstsub(x_lst, self.system.matvec(self.solve_under_mask(x_lst), scalar_mixing=True))
+    def M2(self, u_lst):
+        return self.solve_under_mask(u_lst)
 
-    def apply_Pt_1(self, x_lst):
-        return lstsub(x_lst, self.psuedo_inv.apply(self.system.matvec(x_lst, scalar_mixing=True)))
+    def apply_Q(self, u_lst):
+        return self.M1(u_lst)
+        #return self.M2(u_lst)
 
-    def apply_P_1(self, x_lst):
-        return lstsub(x_lst, self.system.matvec(self.psuedo_inv.apply(x_lst), scalar_mixing=True))
+    def apply_Minv(self, u_lst):
+        return self.M2(u_lst)
+        #return self.M1(u_lst)
 
+    #def v_end(self, b_lst, x_lst):
+    #    return lstadd(self.apply_Q(b_lst), self.apply_Pt(x_lst))
+
+    def apply_Pt(self, x_lst):
+        return lstsub(x_lst, self.apply_Q(self.system.matvec(x_lst)))
+
+    def apply_P(self, x_lst):
+        return lstsub(x_lst, self.system.matvec(self.apply_Q(x_lst)))
+
+    
     #def starting_vector(self, b_lst):
-    #    # P_1-form
-    #    return self.psuedo_inv.apply(b_lst)
+    #    #return [0 * u for u in b_lst]
+        #return self.apply_Q(b_lst)
+
+    #def apply_CG_M2(self, b_lst):
+    #    return self.apply_Pt(b_lst)
 
     def apply(self, b_lst):
         if self.system.mask is None:
             return self.psuedo_inv.apply(b_lst)
         else:
-            if self.method == 'add':
-                x_lst = self.apply_schwarz(b_lst)
-            elif self.method == 'v':
-                x_lst = self.apply_MG_V(b_lst)
-            elif self.method == 'v2':
-                x_lst = self.apply_MG_V2(b_lst)
-            elif self.method == 'maskonly':
-                x_lst = self.solve_under_mask(b_lst)
-            else:
-                raise ValueError('unknown method')
-            return x_lst
+            m = getattr(self, 'apply_{}'.format(self.method))
+            return m(b_lst)
 
-    def apply_schwarz(self, b_lst):
-        x_lst = self.psuedo_inv.apply(b_lst)
-        x2_lst = self.solve_under_mask(b_lst)
-        return lstadd(x_lst, x2_lst)
-
-    #def apply_bnn(self, b_lst):
-    #    return lstadd(
-    #        self.apply_Pt_2(self.psuedo_inv.apply(self.apply_P_2(b_lst))),
-    #        self.solve_under_mask(b_lst))
-
-    def apply_bnn(self, b_lst):
-        return self.apply_Pt_1(self.solve_under_mask(self.apply_P_1(b_lst)))
-
+    def apply_add1(self, b_lst):
         return lstadd(
-            self.apply_Pt_1(self.solve_under_mask(self.apply_P_1(b_lst))),
-            self.psuedo_inv.apply(b_lst))
-        #return self.apply_Pt(self.psuedo_inv.apply(b_lst))
+            self.psuedo_inv.apply(b_lst),
+            self.filter(self.solve_under_mask(self.filter(b_lst))))
 
-    def apply_MG_V(self, b_lst):
-
-        def M1(u_lst):
-            #return self.psuedo_inv.apply(u_lst)
-            return self.filter(self.psuedo_inv.apply(self.filter(u_lst, neg=True)), neg=True)
-
-        def M2(u_lst):
-            return u_lst
-            #return self.solve_under_mask(u_lst)
-
-        #M1, M2 = M2, M1
-
+    def apply_add2(self, b_lst):
         return lstadd(
-            self.filter(M1(self.filter(b_lst, neg=True)), neg=True),
-            #M1(b_lst),
-            self.filter(M2(self.filter(b_lst, neg=False)), neg=False))
-            
+            self.filter(self.psuedo_inv.apply(self.filter(b_lst, neg=True)), neg=True),
+            self.filter(self.solve_under_mask(self.filter(b_lst))))
 
-        #return lstadd(M1(b_lst), M2(b_lst)) #M1(b_lst) + M2(b_lst)
-        x_lst = M1(b_lst)
-        return x_lst
-
-
-
+    def apply_add3(self, b_lst):
+        # diverges
+        return lstadd(
+            self.psuedo_inv.apply(b_lst),
+            self.solve_under_mask(b_lst))
     
-        #return lstadd(x_lst, M2(b_lst))
-        #return x_lst
+    def apply_add4(self, b_lst):
+        # diverges
+        return lstadd(
+            self.filter(self.psuedo_inv.apply(self.filter(b_lst, neg=True)), neg=True),
+            self.solve_under_mask(b_lst))
+    
+    def apply_v1(self, b_lst):
+
+        def A_approx(u_lst):
+            #u_lst = self.filter(u_lst, neg=True)
+            u_lst = self.system.matvec(u_lst)
+            #u_lst = self.filter(u_lst, neg=True)
+            return u_lst
+
+        x_lst = self.psuedo_inv.apply(b_lst)
 
         # r = b - A x
-        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
-        c_lst = M2(r_lst)
+        r_lst = lstsub(b_lst, A_approx(x_lst))
+        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst)))
         # x = x + Mdata r
         x_lst = lstadd(x_lst, c_lst)
-
         #return x_lst
         # r = b - A x
-        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
-        c_lst = M1(r_lst)
-        # x = x + Mdata r
-        x_lst = lstadd(x_lst, c_lst)
-
-
-
-        return x_lst
-
-    def apply_MG_V2(self, b_lst):
-
-        x_lst = b_lst #self.solve_under_mask(b_lst)
-        #print len(x_lst)
-        # r = b - A x
-        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
+        r_lst = lstsub(b_lst, A_approx(x_lst))
         c_lst = self.psuedo_inv.apply(r_lst)
         # x = x + Mdata r
         x_lst = lstadd(x_lst, c_lst)
+        return x_lst
+        
+    def apply_v2(self, b_lst):
 
+        def A_approx(u_lst):
+            #u_lst = self.filter(u_lst, neg=True)
+            u_lst = self.system.matvec(u_lst)
+            #u_lst = self.filter(u_lst, neg=True)
+            return u_lst
+
+        x_lst = self.M1(b_lst)
 
         # r = b - A x
-        r_lst = lstsub(b_lst, self.system.matvec(x_lst))
-        c_lst = r_lst #self.solve_under_mask(r_lst)
+        r_lst = lstsub(b_lst, A_approx(x_lst))
+        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst)))
         # x = x + Mdata r
         x_lst = lstadd(x_lst, c_lst)
-
-
-
+        # r = b - A x
+        r_lst = lstsub(b_lst, A_approx(x_lst))
+        c_lst = self.M1(r_lst)
+        # x = x + Mdata r
+        x_lst = lstadd(x_lst, c_lst)
         return x_lst
+        
+
+class SwitchPreconditioner(object):
+    def __init__(self, first, second, n):
+        self.first = first
+        self.second = second
+        self.n = n
+        self.i = 0
+
+    def apply(self, x):
+        if self.i <= self.n:
+            r = self.first.apply(x)
+        else:
+            r = self.second.apply(x)
+        self.i += 1
+        return r
+            

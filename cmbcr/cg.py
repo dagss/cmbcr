@@ -58,7 +58,7 @@ def stopping_cg_generator(A, b, preconditioner=None, x0=None, logger=None,
 
     raise ConvergenceError("Did not converge in %d iterations" % maxit)
 
-def cg_generator(A, b, M=lambda x: x, x0=None):
+def cg_generator(A, b, M=lambda x: x, M2=lambda x: x, M3=lambda x: x, x0=None):
     """
    
 
@@ -84,7 +84,7 @@ def cg_generator(A, b, M=lambda x: x, x0=None):
     while True: # continue forever; caller is responsible for stopping to use generator
         yield x, r, delta_new
 
-        q = A(d)
+        q = M3(A(d))
         dAd = np.dot(d, q)
         if not np.isfinite(dAd):
             raise AssertionError("conjugate_gradients: A * d yielded inf values")
@@ -105,5 +105,5 @@ def cg_generator(A, b, M=lambda x: x, x0=None):
         if delta_new < 0:
             raise ValueError('Preconditioner is not positive-definite: delta_new={}'.format(delta_new))
         beta = delta_new / delta_old
-        d = s + beta * d
+        d = M2(s) + beta * d
         k += 1
