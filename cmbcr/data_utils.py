@@ -1,6 +1,28 @@
 import healpy
 import numpy as np
 import pyfits
+import os
+
+def ring_map_to_fits(filename, map, map_units='uK'):
+
+    nside = int(np.sqrt(map.shape[0] // 12))
+
+    if map.ndim != 1:
+        raise NotImplementedError()
+    pri = pyfits.PrimaryHDU()
+    col = pyfits.Column(name='TEMPERATURE', format='D',
+                        unit='%s,thermodynamic' % map_units, array=map)
+    sec = pyfits.new_table(pyfits.ColDefs([col]))
+    sec.header.update(
+        PIXTYPE='HEALPIX',
+        ORDERING='RING',
+        NSIDE=nside,
+        FIRSTPIX=0,
+        LASTPIX=map.shape[0])
+    if os.path.isfile(filename):
+        os.unlink(filename)
+    pyfits.HDUList([pri, sec]).writeto(filename)
+
 
 def load_beam(path, dtype=np.double):
     import pyfits

@@ -82,7 +82,7 @@ class HarmonicPrior(object):
 
 
 class CrSystem(object):
-    def __init__(self, ninv_maps, bl_list, mixing_maps, prior_list, pixel_domain=False, tilesize=4, mask=None):
+    def __init__(self, ninv_maps, bl_list, mixing_maps, prior_list, mask=None):
         self.ninv_maps = ninv_maps
         self.bl_list = bl_list
         self.mixing_maps = mixing_maps
@@ -90,13 +90,8 @@ class CrSystem(object):
         self.band_count = len(ninv_maps)
         self.comp_count = len(prior_list)
         self.lmax_list = [prior.lmax for prior in prior_list]
-        self.pixel_domain = pixel_domain
-        if self.pixel_domain:
-            self.x_grids = [sympix.make_sympix_grid(lmax + 1, tilesize, n_start=8) for lmax in self.lmax_list]
-            self.x_plans = [sharp.SymPixGridPlan(grid, grid.lmax) for grid in self.x_grids]
-        else:
-            self.x_lengths = [(lmax + 1)**2 for lmax in self.lmax_list]
-            self.x_offsets = np.concatenate([[0], np.cumsum(self.x_lengths)])
+        self.x_lengths = [(lmax + 1)**2 for lmax in self.lmax_list]
+        self.x_offsets = np.concatenate([[0], np.cumsum(self.x_lengths)])
         self.mask = mask
 
     def stack(self, x_lst):
@@ -114,7 +109,8 @@ class CrSystem(object):
         self_kw = dict(
             ninv_maps=self.ninv_maps,
             bl_list=self.bl_list,
-            mixing_maps=self.mixing_maps)
+            mixing_maps=self.mixing_maps,
+            prior_list=self.prior_list)
         self_kw.update(**kw)
         return CrSystem(**self_kw)
 
@@ -125,7 +121,7 @@ class CrSystem(object):
         self.rot_ang = rot_ang
         self.flat_mixing = flat_mixing
 
-    def prepare_prior(self, unity=True):
+    def prepare_prior(self, set_wl_dl=True):
         self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
         for nu in range(self.band_count):
             for k in range(self.comp_count):
@@ -145,17 +141,13 @@ class CrSystem(object):
                 ni_approx += self.mixing_scalars[nu, k]**2 * tau * self.bl_list[nu][:self.lmax_list[k] + 1]**2
             self.ni_approx_by_comp_lst.append(ni_approx)
         # Prepare prior
-        self.dl_list = []
-        self.wl_list = []
-        self.Cl_list = []
-        self.unity = unity
-        for k in range(self.comp_count):
-            Cl = self.prior_list[k].get_Cl(self, k)
-            self.Cl_list.append(Cl)
-            if unity:
-                self.dl_list.append(np.ones(self.lmax_list[k] + 1))
-                self.wl_list.append(np.sqrt(Cl))
-            else:
+        if set_wl_dl:
+            self.dl_list = []
+            self.wl_list = []
+            self.Cl_list = []
+            for k in range(self.comp_count):
+                Cl = self.prior_list[k].get_Cl(self, k)
+                self.Cl_list.append(Cl)
                 self.dl_list.append(1. / Cl)
                 self.wl_list.append(np.ones(self.lmax_list[k] + 1))
 
@@ -205,13 +197,6 @@ class CrSystem(object):
             sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, lmax)
             for lmax in self.lmax_list]
         self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
-
-    def matvec_pix(self, x_lst):
-        assert self.unity
-        # Seperate routine for pixel-domain matvec where we take lmax \to \infty
-        # in order to
-        1/0
-
 
     def matvec(self, x_lst, skip_prior=False):
         assert len(x_lst) == self.comp_count
@@ -304,14 +289,32 @@ class CrSystem(object):
         mixing_maps = {}
 
         mask = config_doc['model'].get('mask', '')
+
+
         if mask:
-            mask = load_map_cached(mask)
-            mask = mask.copy()
-            #mask[:] = 1
-            #nside = nside_of(mask)
-            #mask[6*nside**2:12*nside**2] = 0
+            if 0:
+                mask = np.zeros(12 * udgrade**2)
+                mask[:] = 1
+                nside = udgrade
+                mask[6*udgrade**2:12*udgrade**2] = 0
+            else:
+                mask = load_map_cached(mask)
+                mask = mask.copy()
+                #mask[:] = 1
+                #nside = nside_of(mask)
+                #mask[6*nside**2:12*nside**2] = 0
         else:
             mask = None
+        
+        
+        ## if mask:
+        ##     mask = load_map_cached(mask)
+        ##     mask = mask.copy()
+        ##     mask[:] = 1
+        ##     nside = nside_of(mask)
+        ##     mask[6*nside**2:12*nside**2] = 0
+        ## else:
+        ##     mask = None
 
         nu = 0
         for dataset in config_doc['datasets']:
@@ -328,6 +331,8 @@ class CrSystem(object):
 
                 rms = load_map_cached(rms_filename)
                 rms = rms.copy()
+                ##print 'WARNING: mean rms'
+                ##rms[:] = rms.mean() ## DEBUG
 
                 if udgrade is not None:
                     rms = healpy.ud_grade(rms, order_in='RING', order_out='RING', nside_out=udgrade, power=1)
@@ -382,6 +387,39 @@ class CrSystem(object):
             plt.semilogy(self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted')
         plt.draw()
 
+
+def restrict_system(system):
+    """
+    Create a new system that has half the resolution.
+    """
+    lmax_list_dg = [L // 2 for L in system.lmax_list]
+
+    wl_list_dg = []
+    dl_list_dg = []
+    rl_list = []
+    
+    for k in range(system.comp_count):
+        # make restriction rl such that rl=0.1 (i.e., rl**2=0.01) at L
+        L = lmax_list_dg[k]
+        ls = np.arange(L + 1, dtype=np.double)
+        sigma_sq = -2. * np.log(0.1) / L / (L + 1)
+        rl = np.exp(0.5 * ls * (ls + 1) * sigma_sq)
+
+        # update and truncate wl_list and dl_list
+        wl_list_dg.append(system.wl_list[k][:L + 1] * rl)
+        dl_list_dg.append(system.dl_list[k][:L + 1] * rl**2)
+        rl_list.append(rl)
+
+    system_dg = system.copy_with()
+    system_dg.lmax_list = lmax_list_dg
+    system_dg.wl_list = wl_list_dg
+    system_dg.dl_list = dl_list_dg
+    system_dg.rl_list = rl_list
+    system_dg.set_params(system.lmax_ninv, system.rot_ang, system.flat_mixing)
+    system_dg.prepare_prior(set_wl_dl=False)
+    system_dg.prepare(use_healpix=True)
+    return system_dg
+        
 
 def downgrade_system(system, fraction):
     # Downgrade all the beams in the system to fraction*fwhm; using Gaussian beam approximations

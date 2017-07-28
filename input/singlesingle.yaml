@@ -1,6 +1,7 @@
 
 model:
-  mask: /store/dagss/planckdata/commander_mask_n256_likelihood_v1.fits
+  #mask: /store/dagss/planckdata/commander_mask_n256_likelihood_v1.fits
+  mask: /home/dagss/astro/cmbcr/mask_2048.fits
   
   mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
 
@@ -19,7 +20,7 @@ model:
         
         type: power
         beta: -2.5
-        cross: 0.01
+        cross: 0.1
         
 
         #beta: -0.5  #-1.5

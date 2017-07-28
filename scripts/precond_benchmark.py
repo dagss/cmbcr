@@ -34,7 +34,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 128 * w
+nside = 32 * w
 factor = 2048 // nside * w
 
 
@@ -64,8 +64,7 @@ system.set_params(
     flat_mixing=False,
     )
 
-unity = 'unity' in sys.argv
-system.prepare_prior(unity=unity)
+system.prepare_prior()
 system.prepare(use_healpix=True)
 
 
@@ -84,7 +83,7 @@ Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
-    #scatter_l_to_lm(1. / system.dl_list[k]) *
+    scatter_l_to_lm(1. / system.dl_list[k]) *
     #scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
@@ -165,8 +164,8 @@ class Benchmark(object):
 
 
     def ploterr(self):
-        #fig3.gca().semilogy(self.err_norms, self.style, label=self.label)
-        fig3.gca().semilogy(self.sht_counts, self.err_norms, self.style, label=self.label)
+        fig3.gca().semilogy(self.err_norms, self.style, label=self.label)
+        #fig3.gca().semilogy(self.sht_counts, self.err_norms, self.style, label=self.label)
 
     def plotscale(self):
         clf()
@@ -226,7 +225,6 @@ if 0:
 
     1/0
 
-method = 'add1'
 
 if 'plot' in sys.argv:
     clf()
@@ -266,6 +264,9 @@ if 'eig' in sys.argv:
 
 if 'op' in sys.argv:
     #p = cmbcr.PsuedoInversePreconditioner(system)
+
+    method = 'v2'
+
     p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
 
     from cmbcr import beams
@@ -320,62 +321,36 @@ if 'op' in sys.argv:
 
 benchmarks = [
 
-    Benchmark(
-        'Diagonal',
-        '-o',
-        cmbcr.DiagonalPreconditioner(system)),
+    ## Benchmark(
+    ##     'Diagonal',
+    ##     '-o',
+    ##     cmbcr.DiagonalPreconditioner(system)),
 
     ## Benchmark(
-    ##     'Banded',
+    ##     'Psuedo-inverse ({})'.format('v1'),
     ##     '-o',
-    ##     cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=False),
+    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v1'),
+    ## ),
+    ## Benchmark(
+    ##     'Psuedo-inverse (v2)',
+    ##     '-o',
+    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v2'),
     ##     ),
-
-#    Benchmark(
-#        'Banded (couplings)',
-#        '-o',
-#        cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)),
-
-    #Benchmark(
-    #    'Psuedo-inverse (nomask)',
-    #    '-o',
-    #    cmbcr.PsuedoInversePreconditioner(system),
-    #    ),
-
-    #Benchmark(
-    #    'Psuedo-inverse ({})'.format('v'),
-    #    '-o',
-    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v'),
-    #    ),
-    #Benchmark(
-    #    'Psuedo-inverse (v1)',
-    #    '-o',
-    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v1'),
-    #    ),
-    #Benchmark(
-    #    'Psuedo-inverse (v2)',
-    #    '-o',
-    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v2'),
-    #    ),
+    ## Benchmark(
+    ##     'Psuedo-inverse (bnn)',
+    ##     '-o',
+    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='bnn'),
+    ##     ),
     Benchmark(
         'Psuedo-inverse (add1)',
         '-o',
         cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add1'),
         ),
     #Benchmark(
-    #    'Psuedo-inverse (add2)',
+    #    'Psuedo-inverse (MG)',
     #    '-o',
-    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add2'),
-    #    ),
-    #Benchmark(
-    #    'Psuedo-inverse (add3)',
-    #    '-o',
-    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add3'),
-    #    ),
-    #Benchmark(
-    #    'Psuedo-inverse (add4)',
-    #    '-o',
-    #    cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add4'),
+    #    cmbcr.MGPreconditioner(system),
+    #    #cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add1'),
     #    ),
     ]
 
@@ -415,7 +390,7 @@ clf()
 for bench in benchmarks:
     bench.ploterr()
 fig3.gca().set_ylim((1e-6, 1e4))
-fig3.gca().set_xlim((0, 800))
+#fig3.gca().set_xlim((0, 800))
 
 legend()
 ion()

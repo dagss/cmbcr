@@ -197,8 +197,6 @@ class PsuedoInverseWithMaskPreconditioner(object):
         return [self.filter_vec(k, x_lst[k], neg) for k in range(self.system.comp_count)]
     
     def solve_under_mask(self, r_h_lst):
-        if self.system.unity:
-            return r_h_lst
         c_h_lst = []
         for k in range(self.system.comp_count):
             r_H = r_h_lst[k]
@@ -212,6 +210,7 @@ class PsuedoInverseWithMaskPreconditioner(object):
         return c_h_lst
 
     def M1(self, u_lst):
+        return self.psuedo_inv.apply(u_lst)
         return self.filter(self.psuedo_inv.apply(self.filter(u_lst, neg=True)), neg=True)
 
     def M2(self, u_lst):
@@ -252,7 +251,9 @@ class PsuedoInverseWithMaskPreconditioner(object):
     def apply_add1(self, b_lst):
         return lstadd(
             self.psuedo_inv.apply(b_lst),
-            self.filter(self.solve_under_mask(self.filter(b_lst))))
+            lstscale(1,
+                self.filter(self.solve_under_mask(self.filter(b_lst)))
+                         ))
 
     def apply_add2(self, b_lst):
         return lstadd(
@@ -279,18 +280,16 @@ class PsuedoInverseWithMaskPreconditioner(object):
             #u_lst = self.filter(u_lst, neg=True)
             return u_lst
 
-        x_lst = self.psuedo_inv.apply(b_lst)
+        # x = M_outer b
+        x_lst = self.filter(self.psuedo_inv.apply(self.filter(b_lst, neg=True)), neg=True)
 
-        # r = b - A x
+        # x = x + M_inner (b - A x)
         r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst)))
-        # x = x + Mdata r
+        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst, neg=False)), neg=False)
         x_lst = lstadd(x_lst, c_lst)
-        #return x_lst
-        # r = b - A x
+        # x = x + M_outer (b - A x)
         r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.psuedo_inv.apply(r_lst)
-        # x = x + Mdata r
+        c_lst = self.filter(self.psuedo_inv.apply(self.filter(r_lst, neg=True)), neg=True)
         x_lst = lstadd(x_lst, c_lst)
         return x_lst
         
@@ -302,19 +301,26 @@ class PsuedoInverseWithMaskPreconditioner(object):
             #u_lst = self.filter(u_lst, neg=True)
             return u_lst
 
-        x_lst = self.M1(b_lst)
+        # x = M_outer b
+        x_lst = self.psuedo_inv.apply(b_lst)
 
-        # r = b - A x
+        # x = x + M_inner (b - A x)
         r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst)))
-        # x = x + Mdata r
+        #c_lst = self.solve_under_mask(r_lst)
+        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst, neg=False)), neg=False)
         x_lst = lstadd(x_lst, c_lst)
-        # r = b - A x
+        # x = x + M_outer (b - A x)
         r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.M1(r_lst)
-        # x = x + Mdata r
+        c_lst = self.psuedo_inv.apply(r_lst)
         x_lst = lstadd(x_lst, c_lst)
         return x_lst
+
+    def apply_bnn(self, b_lst):
+        return lstadd(
+            self.apply_Pt(self.apply_Minv(self.apply_P(b_lst))),
+            self.apply_Q(b_lst))
+    
+
         
 
 class SwitchPreconditioner(object):
@@ -332,3 +338,52 @@ class SwitchPreconditioner(object):
         self.i += 1
         return r
             
+
+class MGPreconditioner(object):
+    def __init__(self, system):
+        from .cr_system import restrict_system
+        self.system_h = system
+        self.system_H = restrict_system(system)
+
+        self.precond_h = PsuedoInverseWithMaskPreconditioner(self.system_h, 'add1')
+        self.precond_H = PsuedoInverseWithMaskPreconditioner(self.system_H, 'add1')
+
+    def apply(self, b_lst):
+        
+        def restrict(u_lst):
+            v_lst = []
+            for k in range(self.system_h.comp_count):
+                u = pad_or_truncate_alm(u_lst[k], self.system_H.lmax_list[k])
+                u *= scatter_l_to_lm(self.system_H.rl_list[k])
+                v_lst.append(u)
+            return v_lst
+
+        def prolong(u_lst):
+            v_lst = []
+            for k in range(self.system_h.comp_count):
+                u = u_lst[k] * scatter_l_to_lm(self.system_H.rl_list[k])
+                u = pad_or_truncate_alm(u, self.system_h.lmax_list[k])
+                v_lst.append(u)
+            return v_lst
+
+        x_lst = lstscale(0, b_lst)
+
+        for i in range(10):
+            r_h_lst = lstsub(b_lst, self.system_h.matvec(x_lst))
+            c_h_lst = self.precond_h.apply(r_h_lst)
+            x_lst = lstadd(x_lst, lstscale(0.01, c_h_lst))
+        
+        #x_lst = self.precond_h.apply(b_lst)
+        #r_h_lst = lstsub(b_lst, self.system_h.matvec(x_lst))
+        #r_H_lst = restrict(r_h_lst)
+        #c_H_lst = self.precond_H.apply(r_H_lst)
+        #c_h_lst = prolong(c_H_lst)
+        #x_lst = lstadd(x_lst, lstscale(0.01, c_h_lst))
+
+        for i in range(10):
+            r_h_lst = lstsub(b_lst, self.system_h.matvec(x_lst))
+            c_h_lst = self.precond_h.apply(r_h_lst)
+            x_lst = lstadd(x_lst, lstscale(0.01, c_h_lst))
+        
+        return x_lst
+        
