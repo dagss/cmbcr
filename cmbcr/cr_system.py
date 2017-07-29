@@ -74,9 +74,13 @@ class HarmonicPrior(object):
             Cl *= amplitude
         elif t == 'gaussian':
             ls = np.arange(self.lmax + 1)
-            leps = self.spec['l_eps']
-            sigma = np.sqrt(-2. * np.log(self.spec['eps']) / leps / (leps + 1))
-            dl = np.exp(0.5 * ls * (ls + 1) * sigma**2)
+            sigma = np.sqrt(-2. * np.log(self.spec['beam_cross']) / self.lmax / (self.lmax + 1))
+            Cl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
+
+            nl = system.ni_approx_by_comp_lst[k]
+            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
+            amplitude = 1. / nl[l_cross]
+            Cl *= amplitude
 
         return Cl
 
@@ -292,11 +296,11 @@ class CrSystem(object):
 
 
         if mask:
-            if 0:
+            if 1:
                 mask = np.zeros(12 * udgrade**2)
                 mask[:] = 1
                 nside = udgrade
-                mask[6*udgrade**2:12*udgrade**2] = 0
+                mask[3*udgrade**2:8*udgrade**2] = 0
             else:
                 mask = load_map_cached(mask)
                 mask = mask.copy()
