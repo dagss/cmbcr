@@ -7,7 +7,7 @@ model:
 
   components:
     - name: cmb
-      lmax: 6000
+      lmax: 4000
       mixmat: '06'
       prior:
         #type: gaussian
@@ -20,6 +20,7 @@ model:
         
         type: power
         beta: -2.5
+        beam_cross: 0.1 # for gaussian only
         cross: 0.1
         
 
