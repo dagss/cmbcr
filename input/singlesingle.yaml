@@ -1,13 +1,14 @@
 
 model:
   #mask: /store/dagss/planckdata/commander_mask_n256_likelihood_v1.fits
-  mask: /home/dagss/astro/cmbcr/mask_2048.fits
+  #mask: /home/dagss/astro/cmbcr/mask_2048.fits
+  mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
   
   mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
 
   components:
     - name: cmb
-      lmax: 4000
+      lmax: 6000
       mixmat: '06'
       prior:
         #type: gaussian

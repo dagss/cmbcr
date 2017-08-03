@@ -32,52 +32,58 @@ from cmbcr.cg import cg_generator
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 
-
-
-
 def csc_neighbours(nside, pick):
-    
+    # The returned matrix will be npix-times-npix, but have zero entries outside the mask
     pixels = pick.nonzero()[0]
     pixels_reverse = np.zeros(pick.shape, dtype=int)
     pixels_reverse[pixels] = np.arange(pixels.shape[0])
 
     length = pixels.shape[0]
     indices = np.zeros(9 * length, dtype=np.int)
-    indptr = np.zeros(length + 1, dtype=np.int)
-    neighbours = healpy.get_all_neighbours(nside, pixels, nest=False)
+    indptr = np.zeros(12 * nside**2 + 1, dtype=np.int)
+    neighbours = healpy.get_all_neighbours(nside, pixels, nest=True)
+
+    npix = 12 * nside**2
+    
     idx = 0
-    for j, ipix in enumerate(pixels):
+
+    for j in range(npix):
         indptr[j] = idx
-        neighlst = neighbours[:, j]
-        neighlst = neighlst[(neighlst != -1) & pick[neighlst]]
-        n = neighlst.shape[0]
-        indices[idx] = j
 
-        i_arr = pixels_reverse[neighlst]
-        indices[idx + 1:idx + 1 + n] = i_arr
-
-        #data[idx] = 1.0
-        #data[idx + 1:idx + 1 + n] = x[j] * x[i_arr] + y[j] * y[i_arr] + z[j] * z[i_arr]
-        
-        idx += n + 1
+        # if columns is outside mask it is just entirely empty, no elements stored
+        if pick[j]:
+            # column is inside mask
+            k = pixels_reverse[j]
+            neighlst = neighbours[:, k]
+            neighlst = neighlst[(neighlst != -1) & pick[neighlst]]
+            n = neighlst.shape[0]
+            indices[idx] = j
+            #i_arr = pixels_reverse[neighlst]
+            indices[idx + 1:idx + 1 + n] = neighlst
+            idx += n + 1
 
     indptr[-1] = idx
     indices = indices[:idx]
     data = np.ones(idx)
-    return csc_matrix((data, indices, indptr), shape=(length, length))
+    return csc_matrix((data, indices, indptr), shape=(npix, npix))
 
 
-def make_Si_sparse_matrix(Si_pattern, dl, ridge, pixels):
-    x, y, z = healpy.pix2vec(nside, pixels, nest=False)
+def make_Si_sparse_matrix(Si_pattern, dl, ridge):
 
     data = np.zeros_like(Si_pattern.data)
-    for j in range(pixels.shape[0]):
+    for j in range(Si_pattern.shape[1]):
         i_arr = Si_pattern.indices[Si_pattern.indptr[j]:Si_pattern.indptr[j + 1]]
-        data[Si_pattern.indptr[j]:Si_pattern.indptr[j + 1]] = cmbcr.beam_by_cos_theta(
-            dl,
-            (x[j] * x[i_arr] + y[j] * y[i_arr] + z[j] * z[i_arr]))
-        diag_ind = Si_pattern.indptr[j] + (i_arr == j).nonzero()[0][0]
-        data[diag_ind] += ridge
+
+        if len(i_arr):
+            # k is the offset of the diagonal entry
+            k = (i_arr == j).nonzero()[0][0]
+            
+            x, y, z = healpy.pix2vec(nside, i_arr, nest=True)
+            data[Si_pattern.indptr[j]:Si_pattern.indptr[j + 1]] = cmbcr.beam_by_cos_theta(
+                dl,
+                (x[k] * x + y[k] * y + z[k] * z))
+            diag_ind = Si_pattern.indptr[j] + k
+            data[diag_ind] += ridge
 
     return csc_matrix((data, Si_pattern.indices, Si_pattern.indptr), shape=Si_pattern.shape)
 
@@ -85,7 +91,7 @@ def make_Si_sparse_matrix(Si_pattern, dl, ridge, pixels):
 
 w = 1
 
-nside = 32 * w
+nside = 64 * w
 factor = 2048 // nside * w
 
 
@@ -124,10 +130,17 @@ b = system.matvec(x0)
 x0_stacked = system.stack(x0)
 
 
-ridge_factor = 5e-4 #5e-3
+ridge_factor = 5e-3 #5e-3
 
 dl = system.dl_list[0]
-nl = cmbcr.standard_needlet_by_l(2, 2 * dl.shape[0] - 1)
+
+#
+# SHOULD INTRODUCE V-CYCLE TO SEE IF THAT HELPS>...
+#
+
+
+# WORKS BEST:
+nl = cmbcr.standard_needlet_by_l(1.5, 2 * dl.shape[0] - 1)
 i = nl.argmax()
 dl = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
 
@@ -139,7 +152,7 @@ from cmbcr.precond_psuedoinv import *
 x = lstscale(0, b)
 
 
-mask_p = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=0)
+mask_p = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='NESTED', power=0)
 mask_p[mask_p != 1] = 0
 pick = (mask_p == 0)
 n = int(pick.sum())
@@ -157,12 +170,12 @@ z = sharp.sh_synthesis(nside, z)
 estimated_max = z[0]
 
 ridge = ridge_factor * estimated_max #5e-3 * estimated_max
-
+#ridge = 0
 
 Si_pattern = csc_neighbours(nside, pick)
-Si_pattern = Si_pattern * Si_pattern * Si_pattern
+Si_pattern = Si_pattern * Si_pattern * Si_pattern * Si_pattern
 Si_pattern.sum_duplicates()
-Si_sparse = make_Si_sparse_matrix(Si_pattern, dl, ridge, pick.nonzero()[0])
+Si_sparse = make_Si_sparse_matrix(Si_pattern, dl, ridge)
 
 #Si_sparse.data[:] = 0
 #Si_sparse.data[Si_sparse.indptr[:-1]] = 1e10 #+= ridge
@@ -171,18 +184,20 @@ call_count = 0
 
 
 def Si(u):
-    u = sharp.sh_adjoint_synthesis(lmax, u)
-    u *= scatter_l_to_lm(dl)
-    u_pad = sharp.sh_synthesis(nside, u)
     return u_pad
 
 
 def YZ_Si_YZ(u_in):
     global call_count
     call_count += 1
-    u_pad = np.zeros_like(mask_p)
-    u_pad[pick] = u_in
-    return Si(u_pad)[pick] + u_in * ridge
+
+    u = padvec(u_in)
+    u = healpy.reorder(u, n2r=True)
+    u = sharp.sh_adjoint_synthesis(lmax, u)
+    u *= scatter_l_to_lm(dl)
+    u = sharp.sh_synthesis(nside, u)
+    u = healpy.reorder(u, r2n=True)
+    return u[pick] + u_in * ridge
 
 
 #Si_dense = Si_sparse.toarray()
@@ -190,15 +205,16 @@ def YZ_Si_YZ(u_in):
 
 if 0:
 
-    i = 2000
+    i = 200
 
     u = np.zeros(n)
     u[i] = 1
 
     clf()
-    mollview(padvec(YZ_Si_YZ(u)), sub=311)
-    mollview(padvec((Si_sparse).toarray()[:, i]), sub=312)
-    mollview(padvec(YZ_Si_YZ(u) - Si_sparse.toarray()[:, i]), sub=313)
+    mollview(padvec(YZ_Si_YZ(u)), sub=311, nest=True)
+    sp = Si_sparse.toarray()[:, pick.nonzero()[0][i]]
+    mollview(sp, sub=312, nest=True)
+    mollview(padvec(YZ_Si_YZ(u)) - sp, sub=313, nest=True)
     draw()
     1/0
 
@@ -207,10 +223,15 @@ if 0:
 
 if 1:
     Si_dense = Si_sparse.toarray()
-    Si_inv = np.linalg.inv(Si_dense)
 
+    Si_dense = Si_dense[pick, :][:, pick]
+
+    print 'inverting'
+    Si_inv = np.linalg.inv(Si_dense)
+    print 'done inverting'
+    
     def mask_inv(x):
-        return np.dot(Si_inv, x)
+        return padvec(np.dot(Si_inv, x[pick]))
     
 
 elif 1:
@@ -220,7 +241,7 @@ elif 1:
     Qinv = np.linalg.inv(Q)   #, rcond=1e-3) ##, rcond=1e-3)
 
     def mask_inv(x):
-        return np.dot(Qinv, x)
+        return padvec(np.dot(Qinv, x[pick]))
     
 elif 1:
     from scipy.sparse.linalg import cg, LinearOperator
@@ -247,9 +268,16 @@ precond_1 = cmbcr.PsuedoInversePreconditioner(system)
 
 
 def precond_mask(u_lst):
-    u_pad = np.zeros_like(mask_p)
-    u_pad[pick] = mask_inv(sharp.sh_synthesis(nside, u_lst[0])[pick])
-    return [sharp.sh_adjoint_synthesis(system.lmax_list[0], u_pad)]
+    x = sharp.sh_synthesis(nside, u_lst[0])
+    x = healpy.reorder(x, r2n=True)
+
+    x = mask_inv(x)
+    #u_pad[pick] = mask_inv(x[pick])
+
+    x = healpy.reorder(x, n2r=True)
+    x = sharp.sh_adjoint_synthesis(system.lmax_list[0], x)
+    
+    return [x]
 
 def precond_both(b):
     x = precond_1.apply(b)
@@ -324,7 +352,7 @@ for i, (x, r, delta_new) in enumerate(solver):
     errlst.append(np.linalg.norm(system.stack(errvec)) / norm0)
 
     print 'it', i
-    if i > 30:
+    if i > 40:
         break
 
 #clf()

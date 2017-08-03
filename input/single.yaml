@@ -10,7 +10,7 @@ model:
 #        beta: -1.5  #-1.5
 #        lcross: 2000
     - name: dust
-      lmax: 3000
+      lmax: 6000
       mixmat: '01'
       prior:
         beta: -1.5  #-1.5

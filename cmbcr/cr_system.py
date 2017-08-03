@@ -46,7 +46,10 @@ class HarmonicPrior(object):
         spec = dict(self.spec)
         spec.pop('l', None)  # if you use l-based spec, crash..
         spec.pop('l_eps', None)  # if you use l-based spec, crash, until these are fixed
-        return HarmonicPrior(lmax=int(self.lmax * fraction + 1), spec=dict(self.spec))
+        new_lmax = int(self.lmax * fraction + 1)
+        if new_lmax % 2 == 0:
+            new_lmax += 1  # make nrings == lmax+1 be a pair number
+        return HarmonicPrior(lmax=new_lmax, spec=dict(self.spec))
 
     def get_Cl(self, system, k):
         t = self.spec['type']
@@ -296,11 +299,11 @@ class CrSystem(object):
 
 
         if mask:
-            if 1:
+            if 0:
                 mask = np.zeros(12 * udgrade**2)
                 mask[:] = 1
                 nside = udgrade
-                mask[3*udgrade**2:8*udgrade**2] = 0
+                mask[int(5*udgrade**2) - 2*udgrade:int(7*udgrade**2)+2*udgrade] = 0
             else:
                 mask = load_map_cached(mask)
                 mask = mask.copy()

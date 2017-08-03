@@ -33,51 +33,59 @@ from cmbcr.cg import cg_generator
 
 
 def csc_neighbours(nside, pick):
-    
+    # The returned matrix will be npix-times-npix, but have zero entries outside the mask
     pixels = pick.nonzero()[0]
     pixels_reverse = np.zeros(pick.shape, dtype=int)
     pixels_reverse[pixels] = np.arange(pixels.shape[0])
 
     length = pixels.shape[0]
     indices = np.zeros(9 * length, dtype=np.int)
-    indptr = np.zeros(length + 1, dtype=np.int)
-    neighbours = healpy.get_all_neighbours(nside, pixels, nest=False)
+    indptr = np.zeros(12 * nside**2 + 1, dtype=np.int)
+    neighbours = healpy.get_all_neighbours(nside, pixels, nest=True)
+
+    npix = 12 * nside**2
+    
     idx = 0
-    for j, ipix in enumerate(pixels):
+
+    for j in range(npix):
         indptr[j] = idx
-        neighlst = neighbours[:, j]
-        neighlst = neighlst[(neighlst != -1) & pick[neighlst]]
-        n = neighlst.shape[0]
-        indices[idx] = j
 
-        i_arr = pixels_reverse[neighlst]
-        indices[idx + 1:idx + 1 + n] = i_arr
-
-        #data[idx] = 1.0
-        #data[idx + 1:idx + 1 + n] = x[j] * x[i_arr] + y[j] * y[i_arr] + z[j] * z[i_arr]
-        
-        idx += n + 1
+        # if columns is outside mask it is just entirely empty, no elements stored
+        if pick[j]:
+            # column is inside mask
+            k = pixels_reverse[j]
+            neighlst = neighbours[:, k]
+            neighlst = neighlst[(neighlst != -1) & pick[neighlst]]
+            n = neighlst.shape[0]
+            indices[idx] = j
+            #i_arr = pixels_reverse[neighlst]
+            indices[idx + 1:idx + 1 + n] = neighlst
+            idx += n + 1
 
     indptr[-1] = idx
     indices = indices[:idx]
     data = np.ones(idx)
-    return csc_matrix((data, indices, indptr), shape=(length, length))
+    return csc_matrix((data, indices, indptr), shape=(npix, npix))
 
 
-def make_Si_sparse_matrix(Si_pattern, dl, ridge, pixels):
-    x, y, z = healpy.pix2vec(nside, pixels, nest=False)
+def make_Si_sparse_matrix(Si_pattern, dl, ridge):
 
     data = np.zeros_like(Si_pattern.data)
-    for j in range(pixels.shape[0]):
+    for j in range(Si_pattern.shape[1]):
         i_arr = Si_pattern.indices[Si_pattern.indptr[j]:Si_pattern.indptr[j + 1]]
-        data[Si_pattern.indptr[j]:Si_pattern.indptr[j + 1]] = cmbcr.beam_by_cos_theta(
-            dl,
-            (x[j] * x[i_arr] + y[j] * y[i_arr] + z[j] * z[i_arr]))
-        diag_ind = Si_pattern.indptr[j] + (i_arr == j).nonzero()[0][0]
-        data[diag_ind] += ridge
+
+        if len(i_arr):
+            # k is the offset of the diagonal entry
+            k = (i_arr == j).nonzero()[0][0]
+            
+            x, y, z = healpy.pix2vec(nside, i_arr, nest=True)
+            data[Si_pattern.indptr[j]:Si_pattern.indptr[j + 1]] = cmbcr.beam_by_cos_theta(
+                dl,
+                (x[k] * x + y[k] * y + z[k] * z))
+            diag_ind = Si_pattern.indptr[j] + k
+            data[diag_ind] += ridge
 
     return csc_matrix((data, Si_pattern.indices, Si_pattern.indptr), shape=Si_pattern.shape)
-
 
 
 
@@ -87,7 +95,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 128 * w
+nside = 16 * w
 factor = 2048 // nside * w
 
 
@@ -109,142 +117,150 @@ system.prepare_prior()
 system.prepare(use_healpix=True)
 
 
-mask = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=0)
-mask[mask != 1] = 0
-pick = (mask == 0)
-n = int(pick.sum())
-
-
-rng = np.random.RandomState(1)
-
-x0 = [
-    #scatter_l_to_lm(1. / dl) *
-    rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
-    for k in range(system.comp_count)
-    ]
-b = system.matvec(x0)
-x0_stacked = system.stack(x0)
-
-
 from cmbcr.precond_psuedoinv import *
-
-x = lstscale(0, b)
 
 from cmbcr import sympix, block_matrix, sympix_mg
 
 
-class SinvSolver(object):
-    def __init__(self, system, nside, level0=None, diag_factor=1, ridge_factor=5e-2):
-        self.level0 = level0
-        self.system = system
-        self.nside = nside
+# Put on a nice tail on dl
+dl = system.dl_list[0]
 
-        self.mask = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=0)
-        self.mask[self.mask <= 0.9] = 0
-        self.mask[self.mask > 0.9] = 1
+#l = np.arange(1, dl.shape[0] + 1).astype(np.double)
+#dl = l**1
+
+#nl = cmbcr.standard_needlet_by_l(3, 2 * dl.shape[0] - 1)
+nl = cmbcr.standard_needlet_by_l(1.5, 2 * dl.shape[0] - 1)
+#dl = nl
+i = nl.argmax()
+dl = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
+
+
+# NOTE: nested ordering from this point!!
+mask = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='NESTED', power=0)
+mask[mask <= 0.9] = 0
+mask[mask > 0.9] = 1
+pick = (mask == 0)
+
+Si_pattern = csc_neighbours(nside, pick)
+Si_pattern = Si_pattern * Si_pattern #* Si_pattern
+Si_pattern.sum_duplicates()
+Si_pattern = Si_pattern.tocsc()
+diag_val = cmbcr.beam_by_cos_theta(dl, np.ones(1))[0]
+ridge_factor = 5e-3
+Si_sparse = make_Si_sparse_matrix(Si_pattern, dl, diag_val * ridge_factor)
+
+
+if 0:
+    Si_dense = Si_sparse.toarray()[pick,:][:, pick]
+    clf()
+    semilogy(np.linalg.eigvalsh(Si_dense))
+    draw()
+    1/0
+    
+
+
+def healpix_coarsen_sparse_matrix(M):
+    # sums 4 and 4 rows of M, which should be in CSC ordering. This is easily done simply
+    # by dividing each row index by 4, and take every 4th indptr, then invoke sum_duplicates()
+
+    indices = M.indices // 4
+    indptr = M.indptr[::4].copy()
+    
+    result = csc_matrix((M.data.copy(), indices, indptr), shape=(M.shape[0] // 4, M.shape[1] // 4))
+    result.sum_duplicates()
+
+    result.data *= 0.25
+ 
+    
+    return result
         
-        self.pickvec = (self.mask == 0)
-        self.n = int(self.pickvec.sum())
-        self.npix = self.mask.shape[0]
 
-        self.Si_inv_dense = None
+def i_to_nest(i):
+    u = np.zeros(12*nside**2)
+    u[i] = 1
+    u = healpy.reorder(u, r2n=True)
+    return u.nonzero()[0][0]
 
-        if level0 is None:
-            dl = system.dl_list[0]
-            nl = cmbcr.standard_needlet_by_l(2, 2 * dl.shape[0] - 1)
-            i = nl.argmax()
-            dl = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
-            Si_pattern = csc_neighbours(nside, pick)
-            Si_pattern = Si_pattern * Si_pattern * Si_pattern
-            Si_pattern.sum_duplicates()
-            lmax = dl.shape[0] - 1
-            self.diag_val = cmbcr.beam_by_cos_theta(dl, np.ones(1))[0]
-            self.Si_sparse = make_Si_sparse_matrix(Si_pattern, dl, self.diag_val * ridge_factor, self.pickvec.nonzero()[0])
-        elif nside <= 8:
-            self.Si_inv_dense = np.linalg.inv(hammer(self.matvec, self.n))
+
+kk = 1
+
+class SparseJacobi(object):
+    def __init__(self, M):
+        self.M = M
+
+        if kk == 1:
+            self.diag_inv = M.diagonal().copy()
+            self.diag_inv[self.diag_inv != 0] = 1. / self.diag_inv[self.diag_inv != 0]
         else:
-            self.diag_val = self.level0.diag_val * diag_factor
-
-
-    def pad(self, x):
-        x_pad = np.zeros(self.npix)
-        x_pad[self.pickvec] = x
-        return x_pad
-
-    def pick(self, x):
-        return x[self.pickvec]
-
-    def norm_by_l(self, x):
-        return cmbcr.norm_by_l(sharp.sh_analysis(self.system.lmax_list[0], self.pad(x)))
-
+            self.diag_blocks = []
+            for i in range(0, M.shape[0], kk):
+                block = M[i:i + kk, i:i + kk].toarray()
+                self.diag_blocks.append(np.linalg.pinv(block))
+        
     def matvec(self, x):
-        if self.level0 is None:
-            # root level
-            return (self.Si_sparse * x)
-        else:
-            # interpolate to root level and invoke root level
-            x_pad = self.pad(x)
-            x_pad = healpy.ud_grade(x_pad, self.level0.nside, order_in='RING', order_out='RING', power=0)
-            x_pad = self.level0.pad(self.level0.matvec(self.level0.pick(x_pad)))
-            x_pad = healpy.ud_grade(x_pad, self.nside, order_in='RING', order_out='RING', power=0)
-            return self.pick(x_pad)
-            
+        return self.M * x
 
     def error_smoother(self, x):
-        if self.Si_inv_dense is not None:
-            return np.dot(self.Si_inv_dense, x)
+        if kk == 1:
+            return x * self.diag_inv
         else:
-            return x / self.diag_val
+            out = np.zeros_like(x)
+            for i, block in zip(range(0, x.shape[0], kk), self.diag_blocks):
+                out[i:i + kk] = np.dot(block, x[i:i + kk])
+            return out
 
 
+class DenseSolve(object):
+    def __init__(self, M):
+        self.M = M
 
-level0 = SinvSolver(system, nside)
+        self.pick = self.M.diagonal() != 0
+        self.Minv = np.linalg.inv(M[self.pick, :][:, self.pick])
 
-## nside_H = nside // 8
+    def matvec(self, x):
+        return np.dot(self.M, x)
 
-## mask_H = healpy.ud_grade(system.mask, nside_H, order_in='RING', order_out='RING', power=0)
-## mask_H[mask_H <= 0.5] = 0
-## mask_H[mask_H > 0.5] = 1
-## pick_H = (mask_H == 0)
-## n_H = int(pick_H.sum())
+    def error_smoother(self, x):
+        r = np.zeros(self.M.shape[0])
+        r[self.pick] = np.dot(self.Minv, x[self.pick])
+        return r
+    
 
-## u = np.zeros(n_H)
-## u[10] = 1
-
-## u_pad = np.zeros(12*nside_H**2)
-## u_pad[pick_H] = u
-## u_pad = healpy.ud_grade(u_pad, nside, order_in='RING', order_out='RING', power=0)
-
-## u_pad = level0.pad(level0.matvec(u_pad[pick]))
-
-## u_pad = healpy.ud_grade(u_pad, nside_H, order_in='RING', order_out='RING', power=0)
-## print nside_H, u_pad.max()
-
-
-## #
+class Noop(object):
+    def matvec(self, x):
+        return x
+    def error_smoother(self, x):
+        return x
 
 
+nside_H = nside
+Si_H = Si_sparse
+
+C0 = Si_sparse
+C1 = healpix_coarsen_sparse_matrix(C0)
+C2 = healpix_coarsen_sparse_matrix(C1)
+C3 = healpix_coarsen_sparse_matrix(C2)
+C4 = healpix_coarsen_sparse_matrix(C3)
+C5 = healpix_coarsen_sparse_matrix(C4)
 
 
 levels = [
-    level0,
-    SinvSolver(system, nside // 2, diag_factor=2, level0=level0),
-    SinvSolver(system, nside // 4, diag_factor=4, level0=level0), 
-    SinvSolver(system, nside // 8, diag_factor=8, level0=level0), 
-    SinvSolver(system, nside // 16, diag_factor=16, level0=level0), 
-    #SinvSolver(system, nside//2),
+    SparseJacobi(C0),
+    SparseJacobi(C1),
+    #SparseJacobi(C2), 
+    #SparseJacobi(C3),
+    #SparseJacobi(C4),
+    DenseSolve(C2.toarray())
+    ]
 
-]
+if 0:
+    while nside_H > 8:
+        levels.append(SparseJacobi(Si_H))
+        nside_H = nside_H // 2
+        Si_H = healpix_coarsen_sparse_matrix(Si_H)
+    levels.append(DenseSolve(Si_H.toarray()))
 
-#u = np.zeros(levels[-1].n)
-#u[10] = 1
 
-#clf()
-#mollview(levels[-1].pad(levels[-1].matvec(u)), sub=111)
-#draw()
-#1/0
-
-    
     
 def vcycle(levels, ilevel, b):
     if ilevel == len(levels) - 1:
@@ -262,13 +278,14 @@ def vcycle(levels, ilevel, b):
                 x += level.error_smoother(r)
 
         # V
-        for i in range(2):
+        nside_h = nside / 2**ilevel
+        nside_H = nside / 2**(ilevel + 1)
+        for i in range(1):
             r_h = b - level.matvec(x)
 
-            
-            r_H = next_level.pick(healpy.ud_grade(level.pad(r_h), next_level.nside, order_in='RING', order_out='RING', power=0))
+            r_H = healpy.ud_grade(r_h, nside_H, order_in='NESTED', order_out='NESTED', power=0)
             c_H = vcycle(levels, ilevel + 1, r_H)
-            c_h = level.pick(healpy.ud_grade(next_level.pad(c_H), level.nside, order_in='RING', order_out='RING', power=0))
+            c_h = healpy.ud_grade(c_H, nside_h, order_in='NESTED', order_out='NESTED', power=0)
             x += c_h
 
         # post-smooth
@@ -280,50 +297,66 @@ def vcycle(levels, ilevel, b):
 
     
 
+def padvec(u):
+    x = np.zeros(12 * nside**2)
+    x[pick] = u
+    return x
+
+def matvec(x):
+    return (Si_sparse * padvec(x))[pick]
+
+def norm_by_l(x):
+    x = padvec(x)
+    x = healpy.reorder(x, n2r=True)
+    return cmbcr.norm_by_l(sharp.sh_analysis(system.lmax_list[0], x))
+
+
+N = int(pick.sum())
+
+def precond(b):
+    b = padvec(b)
+    return vcycle(levels, 0, b)[pick]
+
 if 0:
     from scipy.linalg import eigvals
-    A = hammer(sinv_solver.matvec, sinv_solver.n)
-    M = hammer(precond, sinv_solver.n)
+    A = hammer(matvec, N)
+    M = hammer(precond, N)
     clf()
+    semilogy(np.linalg.eigvalsh(A))
+    semilogy(np.linalg.eigvalsh(M)[::-1])
     semilogy(sorted(np.abs(eigvals(np.dot(M, A)))))
     draw()
 
 
 else:
-
-    
-
     rng = np.random.RandomState(1)
-    x0 = rng.normal(size=levels[0].n)
-    b = levels[0].matvec(x0)
+    x0 = rng.normal(size=N)
+    b = matvec(x0)
     x = x0 * 0
 
-
-    def precond(b):
-        return vcycle(levels, 0, b)
     
-    clf()
-
     solver = cg_generator(
-     levels[0].matvec,
+     matvec,
      b,
      M=precond,
      )
 
-    x0norm = levels[0].norm_by_l(x0)
-    
-    #for i, (x, r, delta_new) in enumerate(solver):
-    for i in range(2000):
-        r = b - levels[0].matvec(x)
-        x += precond(r)
+    x0norm = norm_by_l(x0)
+    errlst = []
+    for i, (x, r, delta_new) in enumerate(solver):
+    #@for i in range(2000):
+    #    r = b - matvec(x)
+    #    x += precond(r)
 
         errvec = x0 - x
-        semilogy(levels[0].norm_by_l(errvec) / x0norm, label=int(i))
+        errlst.append(np.linalg.norm(errvec) / np.linalg.norm(x0))
+        #semilogy(norm_by_l(errvec) / x0norm, label=int(i))
         
         print i
         
-        if i > 20:
+        if i > 50:
             break
 
+    semilogy(errlst)
     draw()
 
