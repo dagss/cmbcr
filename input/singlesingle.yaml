@@ -8,7 +8,7 @@ model:
 
   components:
     - name: cmb
-      lmax: 6000
+      lmax: 4000
       mixmat: '06'
       prior:
         #type: gaussian
