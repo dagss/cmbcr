@@ -20,7 +20,7 @@ model:
         #l: 2200
         
         type: power
-        beta: -2.5
+        beta: -1.5
         beam_cross: 0.1 # for gaussian only
         cross: 0.1
         

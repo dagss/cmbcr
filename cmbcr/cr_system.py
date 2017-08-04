@@ -303,7 +303,7 @@ class CrSystem(object):
                 mask = np.zeros(12 * udgrade**2)
                 mask[:] = 1
                 nside = udgrade
-                mask[int(5*udgrade**2) - 2*udgrade:int(7*udgrade**2)+2*udgrade] = 0
+                mask[int(4*udgrade**2) - 2*udgrade:int(8*udgrade**2)+2*udgrade] = 0
             else:
                 mask = load_map_cached(mask)
                 mask = mask.copy()
