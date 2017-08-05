@@ -35,7 +35,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 256 * w
+nside = 2048 * w
 factor = 2048 // nside * w
 
 
@@ -77,7 +77,7 @@ x0_stacked = system.stack(x0)
 if 1:
     lmax = system.lmax_list[0]
     l = np.arange(1, 2 * lmax + 1).astype(float)
-    dl = l**2
+    dl = l**2.5
 else:
     dl = system.dl_list[0]
     if 1:
@@ -90,6 +90,7 @@ else:
 lmax_sh = dl.shape[0] - 1
 nrings = lmax + 1
 
+lmax = 4096 - 1
 
 if 1:
     mask_lm = sharp.sh_analysis(lmax, system.mask)
@@ -101,7 +102,7 @@ else:
     k = -2
     mask_gauss[(5*nrings)//12 - k :(7*nrings)//12 + k] = 0
     mask_gauss = mask_gauss.reshape(2 * nrings**2)
-
+1/0
 #mask_gauss[:] = 0
     
 #l = np.arange(lmax + 1)
@@ -199,9 +200,21 @@ def precond_fullsky(u):
     u_pad = u_pad.reshape(2 * nrings**2).real
     return u_pad[pick]
 
+import scipy.ndimage
+def coarsen(u):
+    w = np.asarray([
+        [(1./16), (1./8), (1./16)],
+        [(1./8), (1/.4), (1./8)],
+        [(1./16), (1./8), (1./16)]])
+    print u.shape
+    print w.shape
+    c = scipy.ndimage.convolve(u, w, mode='wrap')
+    return c[::2, ::2]
 
-K = 16
-inv_cl_patch = cl_to_flatsky(1 / (dl * flatsky_matvec_ratio), K, K, lmax)
+
+
+
+#inv_cl_patch = cl_to_flatsky(1 / (dl * flatsky_matvec_ratio), K, K, lmax)
 
 
 def precond_patch(u):
@@ -248,6 +261,9 @@ rng = np.random.RandomState(12)
 x0 = rng.normal(size=n_mask)
 b = matvec_mask_basis(x0)
 x = x0 * 0
+
+
+1/0
 
 norm0 = np.linalg.norm(x0)
 errlst = []
