@@ -26,98 +26,25 @@ from healpy import mollzoom, mollview
 from scipy.sparse import csc_matrix
 #reload(cmbcr.main)
 
+from cmbcr.cr_system import load_map_cached
+
 import sys
 from cmbcr.cg import cg_generator
 
 import scipy.ndimage
 
-config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
+lmax = 400
+lmax_sh = 2 * lmax
 
-w = 1
-
-nside = 2048 * w
-factor = 2048 // nside * w
-
-
-def padvec(u):
-    x = np.zeros(12 * nside**2)
-    x[pick] = u
-    return x
-
-full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
-
-full_res_system.prepare_prior()
-
-system = cmbcr.downgrade_system(full_res_system, 1. / factor)
-
-lmax_ninv = 2 * max(system.lmax_list)
-rot_ang = (0, 0, 0)
-
-system.set_params(
-    lmax_ninv=lmax_ninv,
-    rot_ang=rot_ang,
-    flat_mixing=False,
-    )
-
-system.prepare_prior()
-system.prepare(use_healpix=True)
-
-
-rng = np.random.RandomState(1)
-
-x0 = [
-    scatter_l_to_lm(1. / system.dl_list[k]) *
-    rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
-    for k in range(system.comp_count)
-    ]
-b = system.matvec(x0)
-x0_stacked = system.stack(x0)
-
-
-if 1:
-    lmax = system.lmax_list[0]
-    l = np.arange(1, 2 * lmax + 1).astype(float)
-    dl = l**2.5
-else:
-    dl = system.dl_list[0]
-    if 1:
-        nl = cmbcr.standard_needlet_by_l(1.5, 2 * dl.shape[0] - 1)
-        i = nl.argmax()
-        dl = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
-    #lmax = dl.shape[0] - 1
-    lmax = system.lmax_list[0]
+l = np.arange(1, lmax_sh).astype(float)
+dl = l**1.5
     
 lmax_sh = dl.shape[0] - 1
 nrings = lmax + 1
 
-lmax = 4096 - 1
-
-if 1:
-    mask_lm = sharp.sh_analysis(lmax, system.mask)
-    mask_gauss = sharp.sh_synthesis_gauss(lmax, mask_lm)
-    mask_gauss[mask_gauss < 0.9] = 0
-    mask_gauss[mask_gauss >= 0.9] = 1
-else:
-    mask_gauss = np.ones((nrings, 2 * nrings))
-    k = -2
-    mask_gauss[(5*nrings)//12 - k :(7*nrings)//12 + k] = 0
-    mask_gauss = mask_gauss.reshape(2 * nrings**2)
-1/0
-#mask_gauss[:] = 0
-    
-#l = np.arange(lmax + 1)
 
 
-# Figure out the maximum value of the operator when working in SHTs...
-z = np.zeros(2 * nrings**2)
-z[nrings**2 + nrings] = 1
-z = sharp.sh_adjoint_synthesis_gauss(lmax, z)
-z *= scatter_l_to_lm(dl[:lmax + 1])
-z = sharp.sh_synthesis_gauss(lmax, z)
-estimated_max_sht = z[nrings**2 + nrings]
-
-
-# Set up FFT operator
+mask_hires = load_map_cached('mask_galactic_band_2048.fits')
 
 def cl_to_flatsky(cl, nx, ny, nl):
     out = np.zeros((nx, ny))
@@ -130,146 +57,186 @@ def cl_to_flatsky(cl, nx, ny, nl):
     return cl_flat
 
 
+class Level(object):
 
-
-#import libsharp
-#lambda_lm = np.zeros((lmax + 1, lmax + 1))
-#for m in range(lmax + 1):
-#    lambda_lm[m:, m] = libsharp.normalized_associated_legendre_table(lmax, m, np.pi / 2)[0]
-#dl_m = np.sum(dl[:, None] * lambda_lm**2, axis=1)
-#dl_m = dl
-
-dl_fft = cl_to_flatsky(dl, nrings, 2 * nrings, lmax + 1)
-
-def flatsky_synthesis(u):
-    return np.fft.ifftn(u) * np.prod(u.shape)
-
-def flatsky_adjoint_synthesis(u):
-    return np.fft.fftn(u)
-
-def flatsky_analysis(u):
-    return np.fft.fftn(u) / np.prod(u.shape)
-
-def flatsky_adjoint_analysis(u):
-    return np.fft.ifftn(u)
-
-
-flatsky_matvec_ratio = 1
-
-def flatsky_matvec(u):
-    u = flatsky_adjoint_synthesis(u)
-    u *= dl_fft
-    u = flatsky_synthesis(u)
-    return u
-
-
-u = np.zeros((nrings, 2 * nrings))
-u[nrings // 2, nrings] = 1
-u_out = flatsky_matvec(u)
-estimated_max_fft = u_out.max().real
-
-flatsky_matvec_ratio = r = estimated_max_sht / estimated_max_fft
-
-dl_fft *= flatsky_matvec_ratio
-
-
-pick = (mask_gauss == 0)
-n_mask = int(pick.sum())
-    
-def matvec_mask_basis(u):
-    u_pad = np.zeros(2 * nrings**2)
-    u_pad[pick] = u
-
-    u_pad = flatsky_matvec(u_pad.reshape(nrings, 2 * nrings)).reshape(2 * nrings**2)
-    return u_pad[pick]
+    def __init__(self, lmax, mask, dl):
+        self.lmax = lmax
+        self.nrings = nrings = lmax + 1
         
+        mask_lm = sharp.sh_analysis(lmax, mask)
+        mask_gauss = sharp.sh_synthesis_gauss(lmax, mask_lm)
+        mask_gauss[mask_gauss < 0.9] = 0
+        mask_gauss[mask_gauss >= 0.9] = 1
+        self.mask = mask_gauss
+        self.pick = (mask_gauss == 0)
+        self.n_mask = int(self.pick.sum())
+        
+        self.ind_map = np.zeros(2 * nrings**2, dtype=int)
+        self.ind_map[:] = -1
+        self.ind_map[self.pick] = np.arange(self.n_mask)
+        self.ind_map = self.ind_map.reshape((nrings, 2 * nrings))
 
-#dl_fft_inv = cl_to_flatsky(1 / dl, nrings, 2 * nrings, np.pi, 2 * np.pi)
-dl_fft_inv = dl_fft.copy()
-dl_fft_inv[dl_fft_inv != 0] = 1 / dl_fft_inv[dl_fft_inv != 0]
-#dl_fft += dl_fft.max() * 1e-4
+        self.dl_fft = cl_to_flatsky(dl, nrings, 2 * nrings, lmax + 1)
+
+        self.dl_fft_inv = 1 / self.dl_fft
+
+        self.nrows = self.nrings
+        self.ncols = 2 * self.nrings
+        
+        unitvec = np.zeros((nrings, 2 * nrings))
+        unitvec[nrings // 2, nrings] = 1
+        
+        z = sharp.sh_adjoint_synthesis_gauss(lmax, unitvec.reshape(2 * nrings**2))
+        z *= scatter_l_to_lm(dl[:lmax + 1])
+        z = sharp.sh_synthesis_gauss(lmax, z)
+        estimated_max_sht = z.reshape((nrings, 2 * nrings))[nrings // 2, nrings]
+
+        z = self.flatsky_adjoint_synthesis(unitvec)
+        z *= self.dl_fft
+        z = self.flatsky_synthesis(z).real
+        estimated_max_fft = z[nrings // 2, nrings]
+
+        self.dl_fft *= estimated_max_sht / estimated_max_fft
+        self.dense = False
+
+    def compute_dense(self):
+        self.dense = True
+        self.M = np.linalg.inv(hammer(self.matvec, self.n_mask))
+
+    def pickvec(self, u):
+        return u.reshape(2 * self.nrings**2)[self.pick]
+
+    def padvec(self, u):
+        u_pad = np.zeros(2 * self.nrings**2)
+        u_pad[self.pick] = u.real
+        return u_pad.reshape(self.nrings, 2 * self.nrings)
+
+    def flatsky_synthesis(self, u):
+        return np.fft.ifftn(u) * np.prod(u.shape)
+
+    def flatsky_adjoint_synthesis(self, u):
+        return np.fft.fftn(u)
+
+    def flatsky_analysis(self, u):
+        return np.fft.fftn(u) / np.prod(u.shape)
+
+    def flatsky_adjoint_analysis(self, u):
+        return np.fft.ifftn(u)
+
+    def matvec(self, u):
+        u = self.padvec(u)
+        u = self.flatsky_adjoint_synthesis(u)
+        u *= self.dl_fft
+        u = self.flatsky_synthesis(u)
+        u = self.pickvec(u).real
+        return u
+
+    def precond(self, u):
+        if self.dense:
+            return np.dot(self.M, u)
+        else:
+            u = self.padvec(u)
+            u = self.flatsky_analysis(u)
+            u *= self.dl_fft_inv
+            u = self.flatsky_adjoint_analysis(u)
+            return self.pickvec(u).real
+
+    
+from scipy.sparse import dok_matrix
+
+def coarsen_matrix(coarse_level, fine_level):
+    R = dok_matrix((coarse_level.n_mask, fine_level.n_mask))
+
+    def add(coarse_i, coarse_j, fine_i, fine_j, weight):
+        # wrap around fine_i and fine_j..
+        fine_i = fine_i % fine_level.nrows
+        fine_j = fine_j % fine_level.ncols
+
+        coarse_ind = coarse_level.ind_map[coarse_i, coarse_j]
+        fine_ind = fine_level.ind_map[fine_i, fine_j]
+        if coarse_ind != -1 and fine_ind != -1:
+            R[coarse_ind, fine_ind] = weight
+    
+    for i in range(coarse_level.nrows):
+        for j in range(coarse_level.ncols):
+            # row above
+            add(i, j, 2 * i - 1, 2 * j - 1, 1/16.)
+            add(i, j, 2 * i - 1, 2 * j, 1/8.)
+            add(i, j, 2 * i - 1, 2 * j + 1, 1/16.)
+
+            # center row
+            add(i, j, 2 * i, 2 * j - 1, 1/8.)
+            add(i, j, 2 * i, 2 * j, 1/4.)
+            add(i, j, 2 * i, 2 * j + 1, 1/8.)
+
+            # row below
+            add(i, j, 2 * i + 1, 2 * j - 1, 1/16.)
+            add(i, j, 2 * i + 1, 2 * j, 1/8.)
+            add(i, j, 2 * i + 1, 2 * j + 1, 1/16.)
+
+    return R.tocsr()
 
 
-def precond_fullsky(u):
-    u_pad = np.zeros(2 * nrings**2)
-    u_pad[pick] = u
-    u_pad = u_pad.reshape(nrings, 2 * nrings)
-    u_pad = flatsky_analysis(u_pad)
-    u_pad *= dl_fft_inv
-    u_pad = flatsky_adjoint_analysis(u_pad)
-    u_pad = u_pad.reshape(2 * nrings**2).real
-    return u_pad[pick]
+def v_cycle(ilevel, levels, b):
+    if ilevel == len(levels) - 1:
+        return levels[ilevel].precond(b)
+    else:
+        level = levels[ilevel]
+        next_level = levels[ilevel + 1]
 
-import scipy.ndimage
-def coarsen(u):
-    w = np.asarray([
-        [(1./16), (1./8), (1./16)],
-        [(1./8), (1/.4), (1./8)],
-        [(1./16), (1./8), (1./16)]])
-    print u.shape
-    print w.shape
-    c = scipy.ndimage.convolve(u, w, mode='wrap')
-    return c[::2, ::2]
+        x = b * 0
+        for i in range(1):
+            x += level.precond(b - level.matvec(x))
 
+        for i in range(1):
+            r_h = b - level.matvec(x)
 
+            r_H = coarseners[ilevel] * r_h
 
+            c_H = v_cycle(ilevel + 1, levels, r_H)
 
-#inv_cl_patch = cl_to_flatsky(1 / (dl * flatsky_matvec_ratio), K, K, lmax)
+            c_h = coarseners[ilevel].T * c_H
+            
+            x += c_h
 
+        for i in range(1):
+            x += level.precond(b - level.matvec(x))
+        return x
 
-def precond_patch(u):
-    u_pad = padvec(u)
-
-    # pick out patch 8x8
-    x = u_pad[28:28+K,0:K]
-
-    x = flatsky_analysis(x)
-    x *= inv_cl_patch
-    x = flatsky_adjoint_analysis(x)
-
-    u_pad[:] = 0
-    u_pad[28:28+K,0:K] = x.real
-    return pickvec(u_pad)
-
-precond = precond_fullsky
+def precond(b):
+    return v_cycle(0, levels, b)
 
 
 
-if 'eig' in sys.argv:
+levels = []
+lmax_H = lmax
+while True:
+    lev = Level(lmax_H, mask_hires, dl)
+    levels.append(lev)
+    if lev.n_mask < 1000:
+        lev.compute_dense()
+        break
+    lmax_H //= 2
 
-    A = hammer(matvec_mask_basis, n_mask)
-    M = hammer(precond_fullsky, n_mask)
-    from scipy.linalg import eigvals, eigvalsh
-    clf()
-    semilogy(sorted(eigvalsh(A)))
-    semilogy(sorted(eigvalsh(M))[::-1])
-    semilogy(sorted(eigvalsh(np.dot(M, A))))
-    draw()
-    1/0
+    
+coarseners = []
+for i in range(len(levels) - 1):
+    coarseners.append(coarsen_matrix(levels[i + 1], levels[i]))
 
+level = levels[0]
 
-
-def pickvec(u):
-    return u.reshape(2 * nrings**2)[pick]
-
-def padvec(u):
-    u_pad = np.zeros(2 * nrings**2)
-    u_pad[pick] = u.real
-    return u_pad.reshape(nrings, 2 * nrings)
 
 rng = np.random.RandomState(12)
-x0 = rng.normal(size=n_mask)
-b = matvec_mask_basis(x0)
+x0 = rng.normal(size=level.n_mask)
+b = level.matvec(x0)
 x = x0 * 0
 
-
-1/0
 
 norm0 = np.linalg.norm(x0)
 errlst = []
 
 solver = cg_generator(
-    matvec_mask_basis,
+    level.matvec,
     b,
     M=precond
     )
@@ -287,7 +254,7 @@ for i, (x, r, delta_new) in enumerate(solver):
     errlst.append(np.linalg.norm(errvec) / norm0)
 
     print 'it', i
-    if i > 100:
+    if i > 20:
         break
 
 

@@ -95,7 +95,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 16 * w
+nside = 64 * w
 factor = 2048 // nside * w
 
 
@@ -129,7 +129,9 @@ dl = system.dl_list[0]
 #dl = l**1
 
 #nl = cmbcr.standard_needlet_by_l(3, 2 * dl.shape[0] - 1)
+
 nl = cmbcr.standard_needlet_by_l(1.5, 2 * dl.shape[0] - 1)
+
 #dl = nl
 i = nl.argmax()
 dl = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
