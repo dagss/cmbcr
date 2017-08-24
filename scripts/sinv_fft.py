@@ -35,9 +35,9 @@ import scipy.ndimage
 
 lmax = 128 - 1
 lmax_sh = 2 * lmax
-OMEGA = 1 #0.05
+OMEGA = 0.2
 
-SQRTSPLITFULLSOLVE = True
+SQRTSPLITFULLSOLVE = False
 
 
 def load_Cl_cmb(lmax, filename='camb_11229992_scalcls.dat'):
@@ -54,7 +54,7 @@ Cl_cmb = load_Cl_cmb(10000)
 
 l = np.arange(1, lmax_sh).astype(float)
 #dl = np.exp(0.01 * l)
-dl = l**2.5
+dl = l**2
 
 
 #1.2 #1.5
@@ -71,6 +71,7 @@ mask_hires = mask_hires.copy()
 #mask_hires[:] = 0
 
 def cl_to_flatsky(cl, nx, ny, nl):
+    1/0
     out = np.zeros((nx, ny))
 
     l = np.sqrt(
@@ -98,13 +99,19 @@ class DiagonalSmoother(object):
         u = np.zeros((level.nrows, level.ncols))
         u[0, 0] = 1
         u = flatsky_adjoint_synthesis(u)
-        u *= np.sqrt(level.dl_fft)
+        u *= level.dl_fft_factored
         u = flatsky_synthesis(u).real
         self.inv_diag = 1 / u[0, 0]
 
     def apply(self, u):
-        return self.inv_diag * u
+        return OMEGA * self.inv_diag * u
 
+    
+def image_to_powspec(x):
+    FtW_x = flatsky_analysis(x)
+    Ft_u = flatsky_adjoint_synthesis(u)
+    dl_fft = np.abs(FtW_x / Ft_u)
+    return dl_fft
 
 def flatsky_analysis(u):
     return np.fft.fftn(u) / np.prod(u.shape)
@@ -117,6 +124,7 @@ def flatsky_synthesis(u):
 
 def flatsky_adjoint_synthesis(u):
     return np.fft.fftn(u)
+
 
 class BlockSmoother(object):
     def __init__(self, level):
@@ -138,13 +146,7 @@ class BlockSmoother(object):
                 x = u.reshape((level.nrows // self.tilesize, self.tilesize, level.ncols // self.tilesize, self.tilesize))
                 x = x[0, :, 0, :].reshape(self.tilesize**2)
                 
-                block[:, idx] = x#.reshape(level.nrows * level.ncols, order='c')[:self.tilesize**2]
-        #clf()
-        #imshow(block[:, 11].reshape((self.tilesize, self.tilesize)), interpolation='none')
-        #colorbar()
-        #imshow(np.log(np.abs(block)), interpolation='none')
-        #draw()
-        #1/0
+                block[:, idx] = x
         self.block_inv = np.linalg.inv(block)
         
 
@@ -182,8 +184,9 @@ class BlockSmoother(object):
                 tile = np.dot(self.block_inv, tile.reshape(k**2)).reshape(k, k)
                 
                 # downweight the edges of the tile, which overlaps with other tiles
-                tile[:, :] *= 0.5
-                tile[k:-k, k:-k] *= 2
+                if overlap:
+                    tile[:, :] *= 0.5
+                    tile[overlap:-overlap, overlap:-overlap] *= 2
                 
                 u_out[s] += tile
 
@@ -222,9 +225,11 @@ class Level(object):
         self.ind_map = self.ind_map.reshape((nrings, 2 * nrings))
 
         self.dl = dl
-        self.dl_fft = cl_to_flatsky(dl, nrings, 2 * nrings, lmax + 1)
 
-        self.dl_fft_inv = 1 / self.dl_fft
+        self.dl_fft = cl_to_flatsky(dl, nrings, 2 * nrings, lmax + 1)
+        self.dl_fft_factored = np.sqrt(self.dl_fft) if SQRTSPLITFULLSOLVE else self.dl_fft
+
+        self.dl_fft_inv = 1 / self.dl_fft_factored
 
         self.nrows = self.nrings
         self.ncols = 2 * self.nrings
@@ -238,13 +243,13 @@ class Level(object):
         estimated_max_sht = z.reshape((nrings, 2 * nrings))[nrings // 2, nrings]
 
         z = self.flatsky_adjoint_synthesis(unitvec)
-        z *= self.dl_fft
+        z *= self.dl_fft_factored
         z = self.flatsky_synthesis(z).real
         estimated_max_fft = z[nrings // 2, nrings]
 
 
         scale_factor = estimated_max_sht / estimated_max_fft
-        self.dl_fft *= scale_factor
+        self.dl_fft_factored *= scale_factor
         
         self.inv_diag = 1 / np.sqrt(estimated_max_fft * scale_factor)
         
@@ -274,17 +279,15 @@ class Level(object):
         return np.fft.ifftn(u)
 
     def matvec(self, u):
-        with timed('matvec'):
-            u = self.padvec(u)
-            u = self.flatsky_adjoint_synthesis(u)
-            u *= np.sqrt(self.dl_fft)
-            u = self.flatsky_synthesis(u)
-            u = self.pickvec(u).real
-            return u
+        u = self.padvec(u)
+        u = self.flatsky_adjoint_synthesis(u)
+        u *= self.dl_fft_factored
+        u = self.flatsky_synthesis(u)
+        u = self.pickvec(u).real
+        return u
 
     def precond(self, u):
-        with timed('precond'):
-            return self.smoother.apply(u)
+        return self.smoother.apply(u)
 
         
     
@@ -305,20 +308,32 @@ def coarsen_matrix(coarse_level, fine_level):
     
     for i in range(coarse_level.nrows):
         for j in range(coarse_level.ncols):
-            # row above
-            add(i, j, 2 * i - 1, 2 * j - 1, 1/16.)
-            add(i, j, 2 * i - 1, 2 * j, 1/8.)
-            add(i, j, 2 * i - 1, 2 * j + 1, 1/16.)
+            if 0:
+                # row above
+                add(i, j, 2 * i - 1, 2 * j - 1, 1/16.)
+                add(i, j, 2 * i - 1, 2 * j, 1/8.)
+                add(i, j, 2 * i - 1, 2 * j + 1, 1/16.)
 
-            # center row
-            add(i, j, 2 * i, 2 * j - 1, 1/8.)
-            add(i, j, 2 * i, 2 * j, 1/4.)
-            add(i, j, 2 * i, 2 * j + 1, 1/8.)
+                # center row
+                add(i, j, 2 * i, 2 * j - 1, 1/8.)
+                add(i, j, 2 * i, 2 * j, 1/4.)
+                add(i, j, 2 * i, 2 * j + 1, 1/8.)
 
-            # row below
-            add(i, j, 2 * i + 1, 2 * j - 1, 1/16.)
-            add(i, j, 2 * i + 1, 2 * j, 1/8.)
-            add(i, j, 2 * i + 1, 2 * j + 1, 1/16.)
+                # row below
+                add(i, j, 2 * i + 1, 2 * j - 1, 1/16.)
+                add(i, j, 2 * i + 1, 2 * j, 1/8.)
+                add(i, j, 2 * i + 1, 2 * j + 1, 1/16.)
+            else:
+                # row above
+                add(i, j, 2 * i - 1, 2 * j, 1/8.)
+
+                # center row
+                add(i, j, 2 * i, 2 * j - 1, 1/8.)
+                add(i, j, 2 * i, 2 * j, 1/2.)
+                add(i, j, 2 * i, 2 * j + 1, 1/8.)
+
+                # row below
+                add(i, j, 2 * i + 1, 2 * j, 1/8.)
 
     return R.tocsr()
 
@@ -355,7 +370,7 @@ def precond(b):
 
 
 def last_level(level):
-    return level.n_mask < 2000
+    return level.n_mask < 200
 
 def smoother_factory(level):
     if last_level(level):
@@ -391,6 +406,27 @@ for i in range(len(levels) - 1):
     coarseners.append(coarsen_matrix(levels[i + 1], levels[i]))
 
 
+
+
+
+if 0:
+    A_h = hammer(level.matvec, level.n_mask)
+    R = coarseners[0].toarray()
+
+    A_H = np.dot(R, np.dot(A_h, R.T))
+    
+    A_H_0 = hammer(levels[1].matvec, levels[1].n_mask)
+
+    clf()
+    plot(A_H.diagonal())
+    plot(A_H_0.diagonal())
+    draw()
+    1/0
+    
+
+
+    
+
 def jacobi(matvec, precond, b, n):
     x = precond(b)
     for i in range(n - 1):
@@ -422,7 +458,13 @@ matvec_count = 0
 
 if SQRTSPLITFULLSOLVE:
 
-    INNERITS = 1
+    INNERITS = 10
+
+    def matvec(x):
+        global matvec_count
+        matvec_count += 1
+        return level.matvec(x)
+    
     def precond2(b):
         
         solver = cg_generator(
@@ -448,12 +490,11 @@ if SQRTSPLITFULLSOLVE:
         return x
 
     def precond2_jac(b):
-        x = precond(b)
-        x = precond(x)
+        x = jacobi(matvec, precond, b, INNERITS)
+        x = jacobi(matvec, precond, x, INNERITS)
         return x
 
     def matvec2(u):
-        print 'inc count 2'
         global matvec_count
         matvec_count += 1
         u = level.padvec(u)
@@ -467,9 +508,16 @@ if SQRTSPLITFULLSOLVE:
     solver = cg_generator(
         matvec2,
         b,
-        M=precond2_jac
+        M=precond2
         )
 
+    #A = hammer(matvec2, level.n_mask)
+    #M = hammer(precond2, level.n_mask)
+    #w = np.linalg.eigvals(np.dot(M, A))
+    #clf()
+    #semilogy(sorted(w))
+    #draw()
+    
     
 else:
     b = level.matvec(x0)
@@ -499,14 +547,15 @@ for i, (x, r, delta_new) in enumerate(solver):
     errlst.append(np.linalg.norm(errvec) / norm0)
 
     print 'it', i
-    if matvec_count > 20:
+    if i > 20:
         break
 
 
 
 #clf();
 #imshow(padvec(x-x0), interpolation='none');
-semilogy(matvec_counts, errlst, '-o')
+#semilogy(matvec_counts, errlst, '-o')
+semilogy(errlst, '-o')
 #colorbar()
 draw()
 
