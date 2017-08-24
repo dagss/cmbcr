@@ -66,9 +66,9 @@ dl = l**2.5
 nrings = lmax + 1
 
 
-
 mask_hires = load_map_cached('mask_galactic_band_2048.fits')
-mask_hires[:] = 0
+mask_hires = mask_hires.copy()
+#mask_hires[:] = 0
 
 def cl_to_flatsky(cl, nx, ny, nl):
     out = np.zeros((nx, ny))
