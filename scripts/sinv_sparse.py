@@ -95,7 +95,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 64 * w
+nside = 128 * w
 factor = 2048 // nside * w
 
 
@@ -130,7 +130,7 @@ dl = system.dl_list[0]
 
 #nl = cmbcr.standard_needlet_by_l(3, 2 * dl.shape[0] - 1)
 
-nl = cmbcr.standard_needlet_by_l(1.5, 2 * dl.shape[0] - 1)
+nl = cmbcr.standard_needlet_by_l(3, 2 * dl.shape[0] - 1)
 
 #dl = nl
 i = nl.argmax()
@@ -148,7 +148,7 @@ Si_pattern = Si_pattern * Si_pattern #* Si_pattern
 Si_pattern.sum_duplicates()
 Si_pattern = Si_pattern.tocsc()
 diag_val = cmbcr.beam_by_cos_theta(dl, np.ones(1))[0]
-ridge_factor = 5e-3
+ridge_factor = 5e-2
 Si_sparse = make_Si_sparse_matrix(Si_pattern, dl, diag_val * ridge_factor)
 
 
@@ -184,7 +184,7 @@ def i_to_nest(i):
     return u.nonzero()[0][0]
 
 
-kk = 1
+kk = 16
 
 class SparseJacobi(object):
     def __init__(self, M):
@@ -238,24 +238,26 @@ class Noop(object):
 nside_H = nside
 Si_H = Si_sparse
 
-C0 = Si_sparse
-C1 = healpix_coarsen_sparse_matrix(C0)
-C2 = healpix_coarsen_sparse_matrix(C1)
-C3 = healpix_coarsen_sparse_matrix(C2)
-C4 = healpix_coarsen_sparse_matrix(C3)
-C5 = healpix_coarsen_sparse_matrix(C4)
+#C0 = Si_sparse
+#C1 = healpix_coarsen_sparse_matrix(C0)
+#C2 = healpix_coarsen_sparse_matrix(C1)
+#C3 = healpix_coarsen_sparse_matrix(C2)
+#C4 = healpix_coarsen_sparse_matrix(C3)
+#C5 = healpix_coarsen_sparse_matrix(C4)
 
 
-levels = [
-    SparseJacobi(C0),
-    SparseJacobi(C1),
-    #SparseJacobi(C2), 
-    #SparseJacobi(C3),
-    #SparseJacobi(C4),
-    DenseSolve(C2.toarray())
-    ]
+## levels = [
+##     SparseJacobi(C0),
+##     SparseJacobi(C1),
+##     SparseJacobi(C2), 
+##     SparseJacobi(C3),
+##     #SparseJacobi(C4),
+##     DenseSolve(C4.toarray())
+##     ]
 
-if 0:
+levels = []
+
+if 1:
     while nside_H > 8:
         levels.append(SparseJacobi(Si_H))
         nside_H = nside_H // 2
@@ -356,7 +358,7 @@ else:
         
         print i
         
-        if i > 50:
+        if i > 30:
             break
 
     semilogy(errlst)
