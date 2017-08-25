@@ -33,9 +33,9 @@ from cmbcr.cg import cg_generator
 
 import scipy.ndimage
 
-lmax = 128 - 1
-lmax_sh = 2 * lmax
-OMEGA = 0.2
+lmax = 256 - 1
+lmax_sh = int(1 * lmax)
+OMEGA = 1
 
 SQRTSPLITFULLSOLVE = False
 
@@ -52,22 +52,27 @@ def load_Cl_cmb(lmax, filename='camb_11229992_scalcls.dat'):
 Cl_cmb = load_Cl_cmb(10000)
 
 
-l = np.arange(1, lmax_sh).astype(float)
+l = np.arange(1, lmax_sh + 2).astype(float)
 #dl = np.exp(0.01 * l)
-dl = l**2
+dl = l**3
+#dl = 1 / Cl_cmb[::2][:lmax_sh + 1]
 
+nl = cmbcr.standard_needlet_by_l(3, 2 * dl.shape[0] - 1)
+i = nl.argmax()
+dl = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
+
+lmax_sh = dl.shape[0] - 1
 
 #1.2 #1.5
 
-#dl = 1 / Cl_cmb[:lmax_sh]
 
 
 
 nrings = lmax + 1
 
 
-mask_hires = load_map_cached('mask_galactic_band_2048.fits')
-mask_hires = mask_hires.copy()
+mask_healpix = load_map_cached('mask_galactic_band_2048.fits')
+
 #mask_hires[:] = 0
 
 def cl_to_flatsky(cl, nx, ny, nl):
@@ -89,25 +94,10 @@ class DenseSmoother(object):
     def apply(self, u):
         return np.dot(self.M, u)
 
-
-class DiagonalSmoother(object):
-
-    def __init__(self, level):
-        self.level = level
-
-        # hammer operator on a tilesize x tilesize patch...
-        u = np.zeros((level.nrows, level.ncols))
-        u[0, 0] = 1
-        u = flatsky_adjoint_synthesis(u)
-        u *= level.dl_fft_factored
-        u = flatsky_synthesis(u).real
-        self.inv_diag = 1 / u[0, 0]
-
-    def apply(self, u):
-        return OMEGA * self.inv_diag * u
-
     
-def image_to_powspec(x):
+def image_to_powspec(u, x):
+    # u: unit-vector in flatsky basis
+    # x: image of operator
     FtW_x = flatsky_analysis(x)
     Ft_u = flatsky_adjoint_synthesis(u)
     dl_fft = np.abs(FtW_x / Ft_u)
@@ -161,16 +151,6 @@ class BlockSmoother(object):
 
         overlap = 0
         
-        # TODO pad a border around to wrap around.. for now forget about it...
-        ##u_in 
-        
-        #u = np.transpose(
-        #    u.reshape((self.level.nrows // self.tilesize, self.tilesize,
-        #               self.level.ncols // self.tilesize, self.tilesize)),
-        #    (0, 2, 1, 3))
-
-        
-
         k = self.tilesize
         n, m = self.level.nrows, self.level.ncols
         for i in range(0, n + k - overlap, k):
@@ -191,106 +171,10 @@ class BlockSmoother(object):
                 u_out[s] += tile
 
         u_out = u_out[n:2 * n, m:2 * m]
-                
-        ##         buf = np.zeros((4, 4))
-        ##         if i == 0:
-        ##             buf[ :] = 
-        ##         u_out[i, j, :, :] = np.dot(
-        ##             self.block_inv, u_in[i, j, :, :].reshape(self.tilesize**2)).reshape((self.tilesize, self.tilesize))
-        ##         #x = flatsky_analysis(u[i, j, :, :])
-        ##         #x *= self.inv_dl
-        ##         #u[i, j, :, :] = flatsky_adjoint_analysis(x).real
-        ## u = np.transpose(u, (0, 2, 1, 3)).reshape((self.level.nrows, self.level.ncols))
         u = OMEGA * self.level.pickvec(u_out)
         return u
     
         
-class Level(object):
-
-    def __init__(self, lmax, mask, dl, smoother_factory):
-        self.lmax = lmax
-        self.nrings = nrings = lmax + 1
-        
-        mask_lm = sharp.sh_analysis(lmax, mask)
-        mask_gauss = sharp.sh_synthesis_gauss(lmax, mask_lm)
-        mask_gauss[mask_gauss < 0.9] = 0
-        mask_gauss[mask_gauss >= 0.9] = 1
-        self.mask = mask_gauss
-        self.pick = (mask_gauss == 0)
-        self.n_mask = int(self.pick.sum())
-        
-        self.ind_map = np.zeros(2 * nrings**2, dtype=int)
-        self.ind_map[:] = -1
-        self.ind_map[self.pick] = np.arange(self.n_mask)
-        self.ind_map = self.ind_map.reshape((nrings, 2 * nrings))
-
-        self.dl = dl
-
-        self.dl_fft = cl_to_flatsky(dl, nrings, 2 * nrings, lmax + 1)
-        self.dl_fft_factored = np.sqrt(self.dl_fft) if SQRTSPLITFULLSOLVE else self.dl_fft
-
-        self.dl_fft_inv = 1 / self.dl_fft_factored
-
-        self.nrows = self.nrings
-        self.ncols = 2 * self.nrings
-        
-        unitvec = np.zeros((nrings, 2 * nrings))
-        unitvec[nrings // 2, nrings] = 1
-        
-        z = sharp.sh_adjoint_synthesis_gauss(lmax, unitvec.reshape(2 * nrings**2))
-        z *= scatter_l_to_lm(dl[:lmax + 1])
-        z = sharp.sh_synthesis_gauss(lmax, z)
-        estimated_max_sht = z.reshape((nrings, 2 * nrings))[nrings // 2, nrings]
-
-        z = self.flatsky_adjoint_synthesis(unitvec)
-        z *= self.dl_fft_factored
-        z = self.flatsky_synthesis(z).real
-        estimated_max_fft = z[nrings // 2, nrings]
-
-
-        scale_factor = estimated_max_sht / estimated_max_fft
-        self.dl_fft_factored *= scale_factor
-        
-        self.inv_diag = 1 / np.sqrt(estimated_max_fft * scale_factor)
-        
-        self.smoother = smoother_factory(self)
-
-    def compute_dense(self):
-        self.dense = True
-
-    def pickvec(self, u):
-        return u.reshape(2 * self.nrings**2)[self.pick]
-
-    def padvec(self, u):
-        u_pad = np.zeros(2 * self.nrings**2)
-        u_pad[self.pick] = u.real
-        return u_pad.reshape(self.nrings, 2 * self.nrings)
-
-    def flatsky_synthesis(self, u):
-        return np.fft.ifftn(u) * np.prod(u.shape)
-
-    def flatsky_adjoint_synthesis(self, u):
-        return np.fft.fftn(u)
-
-    def flatsky_analysis(self, u):
-        return np.fft.fftn(u) / np.prod(u.shape)
-
-    def flatsky_adjoint_analysis(self, u):
-        return np.fft.ifftn(u)
-
-    def matvec(self, u):
-        u = self.padvec(u)
-        u = self.flatsky_adjoint_synthesis(u)
-        u *= self.dl_fft_factored
-        u = self.flatsky_synthesis(u)
-        u = self.pickvec(u).real
-        return u
-
-    def precond(self, u):
-        return self.smoother.apply(u)
-
-        
-    
 from scipy.sparse import dok_matrix
 
 def coarsen_matrix(coarse_level, fine_level):
@@ -338,72 +222,230 @@ def coarsen_matrix(coarse_level, fine_level):
     return R.tocsr()
 
 
-def v_cycle(ilevel, levels, b):
+def full_coarsen_matrix(ntheta, nphi):
+    coarse_ntheta = ntheta // 2
+    coarse_nphi = nphi // 2
+    R = dok_matrix((coarse_ntheta * coarse_nphi, ntheta * nphi))
+
+    def add(coarse_i, coarse_j, fine_i, fine_j, weight):
+        # wrap around fine_i and fine_j..
+        fine_i = fine_i % ntheta
+        fine_j = fine_j % nphi
+
+        coarse_ind = coarse_i * coarse_nphi + coarse_j
+        fine_ind = fine_i * nphi + fine_j
+        R[coarse_ind, fine_ind] = weight
+    
+    for i in range(coarse_ntheta):
+        for j in range(coarse_nphi):
+            # row above
+            add(i, j, 2 * i - 1, 2 * j - 1, 1/16.)
+            add(i, j, 2 * i - 1, 2 * j, 1/8.)
+            add(i, j, 2 * i - 1, 2 * j + 1, 1/16.)
+
+            # center row
+            add(i, j, 2 * i, 2 * j - 1, 1/8.)
+            add(i, j, 2 * i, 2 * j, 1/4.)
+            add(i, j, 2 * i, 2 * j + 1, 1/8.)
+
+            # row below
+            add(i, j, 2 * i + 1, 2 * j - 1, 1/16.)
+            add(i, j, 2 * i + 1, 2 * j, 1/8.)
+            add(i, j, 2 * i + 1, 2 * j + 1, 1/16.)
+
+    return R.tocsr()
+
+
+
+mask_lm = sharp.sh_analysis(lmax, mask_healpix)
+mask_gauss = sharp.sh_synthesis_gauss(lmax, mask_lm)
+mask_gauss[mask_gauss < 0.9] = 0
+mask_gauss[mask_gauss >= 0.9] = 1
+
+        
+
+start_ring = nrings // 4
+stop_ring = 3 * nrings // 4
+
+mask = mask_gauss.reshape((nrings, 2 * nrings))[start_ring:stop_ring, :]
+
+
+ntheta = stop_ring - start_ring
+nphi = 2 * nrings
+
+unitvec = np.zeros((ntheta, nphi))
+unitvec[ntheta // 2, nphi // 2] = 1
+
+# 'image' the spherical harmonic operator in pixel domain in order to transfer it to FFT
+u_pad = np.zeros((nrings, 2 * nrings))
+u_pad[start_ring:stop_ring, :] = unitvec.reshape((ntheta, nphi))
+u = sharp.sh_adjoint_synthesis_gauss(lmax, u_pad.reshape(2 * nrings**2), lmax_sh=lmax_sh)
+u *= scatter_l_to_lm(dl)
+u = sharp.sh_synthesis_gauss(lmax, u, lmax_sh=lmax_sh).reshape((nrings, 2 * nrings))
+image_of_operator = u[start_ring:stop_ring, :]
+
+
+dl_fft = image_to_powspec(unitvec, image_of_operator)
+
+
+class Level(object):
+    def __init__(self, dl_fft, mask):
+        self.mask = mask
+        self.dl_fft = dl_fft
+        self.ntheta, self.nphi = dl_fft.shape
+        self.pick = (mask.reshape(self.ntheta * self.nphi) == 0)
+        self.n = int(self.pick.sum())
+        self.R = full_coarsen_matrix(self.ntheta, self.nphi)
+        self.ntheta_H = self.ntheta // 2
+        self.nphi_H = self.nphi // 2
+
+    def pickvec(self, u):
+        return u.reshape(self.ntheta * self.nphi)[self.pick]
+
+    def padvec(self, u):
+        u_pad = np.zeros(self.ntheta * self.nphi)
+        u_pad[self.pick] = u.real
+        return u_pad.reshape(self.ntheta, self.nphi)
+
+    def matvec_padded(self, u):
+        u = flatsky_adjoint_synthesis(u)
+        u *= self.dl_fft
+        u = flatsky_synthesis(u).real
+        return u
+    
+    def matvec(self, u):
+        u = self.padvec(u)
+        u = self.matvec_padded(u)
+        u = self.pickvec(u)
+        return u
+
+    def matvec_coarsened(self, u):
+        # do matvec on the next, coarser level. This is just done once, to create the operator on the next level
+        return self.coarsen_padded(self.matvec_padded(self.interpolate_padded(u)))
+
+    def coarsen_padded(self, u):
+        return (self.R * u.reshape(self.ntheta * self.nphi)).reshape(self.ntheta_H, self.nphi_H)
+
+    def interpolate_padded(self, u):
+        return (self.R.T * u.reshape(self.ntheta_H * self.nphi_H)).reshape(self.ntheta, self.nphi)
+
+
+
+class DiagonalSmoother(object):
+
+    def __init__(self, level):
+        self.level = level
+
+        # hammer operator on a tilesize x tilesize patch...
+        u = np.zeros((level.ntheta, level.nphi))
+        u[level.ntheta // 2, 0] = 1
+        u = level.matvec_padded(u).real
+        ## u = flatsky_adjoint_synthesis(u)
+        ## u *= level.dl_fft
+        ## u = flatsky_synthesis(u).real
+        self.diag = u[level.ntheta // 2, 0] #* (1 + 1e-1)
+        self.inv_diag = 1 / self.diag
+
+
+    def apply(self, u):
+        return OMEGA * self.inv_diag * u
+
+
+def v_cycle(ilevel, levels, smoothers, b):
     if ilevel == len(levels) - 1:
-        return levels[ilevel].precond(b)
+        return smoothers[ilevel].apply(b)
     else:
         level = levels[ilevel]
         next_level = levels[ilevel + 1]
 
         x = b * 0
         for i in range(1):
-            x += level.precond(b - level.matvec(x))
+            x += smoothers[ilevel].apply(b - level.matvec(x))
 
-        for i in range(1):
+        for i in range(2):
             r_h = b - level.matvec(x)
 
-            r_H = coarseners[ilevel] * r_h
+            r_H = coarsen(level, next_level, r_h)
 
-            c_H = v_cycle(ilevel + 1, levels, r_H)
+            c_H = v_cycle(ilevel + 1, levels, smoothers, r_H)
 
-            c_h = coarseners[ilevel].T * c_H
+            c_h = interpolate(level, next_level, c_H)
             
             x += c_h
 
         for i in range(1):
-            x += level.precond(b - level.matvec(x))
+            x += smoothers[ilevel].apply(b - level.matvec(x))
         return x
 
+def coarsen(level, next_level, u):
+    return next_level.pickvec(level.coarsen_padded(level.padvec(u)))
+
+def interpolate(level, next_level, u):
+    return level.pickvec(level.interpolate_padded(next_level.padvec(u)))
+    
+
+def coarsen_level(level):
+    # produce next coarser level
+    ntheta_H = level.ntheta // 2
+    nphi_H = level.nphi // 2
+    mask_H = level.coarsen_padded(level.mask)
+    mask_H[mask_H < 0.5] = 0
+    mask_H[mask_H != 0] = 1
+
+    unitvec = np.zeros((ntheta_H, nphi_H))
+    unitvec[ntheta_H // 2, nphi_H // 2] = 1
+    image_of_operator = level.matvec_coarsened(unitvec)
+    dl_fft_H = image_to_powspec(unitvec, image_of_operator)
+    return Level(dl_fft_H, mask_H)
+
+
+cur_level = level = Level(dl_fft, mask)
+levels = [cur_level]
+
+while cur_level.n > 500:
+    cur_level = coarsen_level(cur_level)
+    levels.append(cur_level)
+    
+smoothers = [DiagonalSmoother(lev) for lev in levels]
+
+
+
+rng = np.random.RandomState(12)
+x0 = rng.normal(size=level.n)
+
+matvec_count = 0
+
 def precond(b):
-    x = v_cycle(0, levels, b)
+    x = v_cycle(0, levels, smoothers, b)
     return x
 
-
-def last_level(level):
-    return level.n_mask < 200
-
-def smoother_factory(level):
-    if last_level(level):
-        return DenseSmoother(level)
-    elif 'diagonal' in sys.argv:
-        return DiagonalSmoother(level)
-    else:
-        return BlockSmoother(level)
-
-
 if 1:
-    levels = []
-    lmax_H = lmax
-    while True:
-        print 'Level(', lmax_H
-        lev = Level(lmax_H, mask_hires, dl, smoother_factory)
-        levels.append(lev)
-        if last_level(lev):
-            break
-        lmax_H //= 2
-else:
-    levels = [
-        Level(lmax, mask_hires, dl, DiagonalSmoother),
-        #Level(lmax // 2, mask_hires, dl, DiagonalSmoother),
-        #Level(lmax // 4, mask_hires, dl, DiagonalSmoother),
-        #Level(lmax // 4, mask_hires, dl, DenseSmoother),
-    ]
+    b = level.matvec(x0)
 
-level = levels[0]
+    solver = cg_generator(
+        level.matvec,
+        b,
+        M=precond
+        )
 
-coarseners = []
-for i in range(len(levels) - 1):
-    coarseners.append(coarsen_matrix(levels[i + 1], levels[i]))
+
+norm0 = np.linalg.norm(x0)
+errlst = []
+
+for i, (x, r, delta_new) in enumerate(solver):
+    errvec = x0 - x
+    errlst.append(np.linalg.norm(errvec) / norm0)
+    if i > 30:
+        break
+
+
+
+#clf();
+#imshow(padvec(x-x0), interpolation='none');
+#semilogy(matvec_counts, errlst, '-o')
+semilogy(errlst, '-o')
+#colorbar()
+draw()
 
 
 
@@ -547,7 +589,7 @@ for i, (x, r, delta_new) in enumerate(solver):
     errlst.append(np.linalg.norm(errvec) / norm0)
 
     print 'it', i
-    if i > 20:
+    if i > 5:
         break
 
 
@@ -558,4 +600,17 @@ for i, (x, r, delta_new) in enumerate(solver):
 semilogy(errlst, '-o')
 #colorbar()
 draw()
+
+## if 1:
+##     A = hammer(level.matvec, level.n)
+##     M = hammer(smoother.apply, level.n)
+
+##     lam = np.asarray(sorted(np.linalg.eigvals(np.dot(M, A))))
+##     clf()
+##     semilogy(np.linalg.eigvalsh(A))
+##     semilogy(np.linalg.eigvalsh(M)[::-1])
+##     semilogy(lam)
+##     print lam.max()
+##     draw()
+##     1/0
 
