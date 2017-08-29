@@ -32,6 +32,14 @@ from cmbcr.cg import cg_generator
 import healpy
 
 
+
+
+
+
+
+
+1/0
+
 def csc_neighbours(nside, pick):
     # The returned matrix will be npix-times-npix, but have zero entries outside the mask
     pixels = pick.nonzero()[0]

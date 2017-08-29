@@ -107,7 +107,7 @@ class PsuedoInversePreconditioner(object):
             # did some experimentation and indeed 1.0 is the optimal value below, just to verify the intuition;
             # when plotted this makes the diagonal of Y^T N^{-1} Y not center on 1, but I suppose that "power"
             # is in the rest of the matrix
-            q = ninv_gauss_no_w[ninv_gauss_no_w > ninv_gauss_no_w.max() * 7e-4]
+            ##q = ninv_gauss_no_w[ninv_gauss_no_w > ninv_gauss_no_w.max() * 7e-4]
             alpha = np.sqrt((ninv_gauss_no_w**2).sum() / ninv_gauss_no_w.sum())
             self.alpha_lst.append(1 * alpha)
             

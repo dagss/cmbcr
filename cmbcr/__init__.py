@@ -10,3 +10,4 @@ from .precond_pixel import *
 from .mmajor import *
 from .multilevel import *
 from .precond_diag import *
+from .masked_solver import *

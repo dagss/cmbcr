@@ -38,9 +38,10 @@ def rotate_mixing(lmax_pix, mixing_map, rot_ang):
 
 
 class HarmonicPrior(object):
-    def __init__(self, lmax, spec):
+    def __init__(self, lmax, spec, fullres_lmax=None):
         self.lmax = lmax
         self.spec = spec
+        self.fullres_lmax = fullres_lmax or lmax
 
     def downgrade(self, fraction):
         spec = dict(self.spec)
@@ -49,41 +50,46 @@ class HarmonicPrior(object):
         new_lmax = int(self.lmax * fraction + 1)
         if new_lmax % 2 == 0:
             new_lmax += 1  # make nrings == lmax+1 be a pair number
-        return HarmonicPrior(lmax=new_lmax, spec=dict(self.spec))
+        return HarmonicPrior(lmax=new_lmax, spec=dict(self.spec), fullres_lmax=self.lmax)
 
     def get_Cl(self, system, k):
         t = self.spec['type']
         if t == 'power':
             l = np.arange(1, self.lmax + 2, dtype=np.float)
-
-            nl = system.ni_approx_by_comp_lst[k]
-            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
-            amplitude = 1. / nl[l_cross]
-            Cl = amplitude * (l / l_cross)**self.spec['beta']
+            Cl = l**self.spec['beta']
         elif t == 'file':
             dat = np.loadtxt(self.spec['filename'])
             assert dat[0,0] == 0 and dat[1,0] == 1 and dat[2,0] == 2
-            Cl = dat[:, 1][:self.lmax + 1]
-            ls = np.arange(2, self.lmax + 1)
+            Cl = dat[:, 1]
+            ls = np.arange(2, Cl.shape[0])
             Cl[2:] /= ls * (ls + 1) / 2 / np.pi
             Cl[0] = Cl[1] = Cl[2]
 
-            ni = system.ni_approx_by_comp_lst[k][self.spec['l']]
-            if ni == 0:
-                # mask-only; doesn't matter what the amplitude is
-                amplitude = 1
+            if self.lmax < self.fullres_lmax:
+                from scipy.interpolate import interp1d
+                Cl_func = interp1d(np.arange(Cl.shape[0]), Cl)
+                Cl = Cl_func(np.linspace(0, self.fullres_lmax, self.lmax + 1))
             else:
-                amplitude = 1. / (ni * Cl[self.spec['l']])
-            Cl *= amplitude
+                Cl = Cl[:self.lmax + 1]
+
+            ## ni = system.ni_approx_by_comp_lst[k][self.spec['cross']]
+            ## if ni == 0:
+            ##     # mask-only; doesn't matter what the amplitude is
+            ##     amplitude = 1
+            ## else:
+            ##     amplitude = 1. / (ni * Cl[self.spec['cross']])
+            ## Cl *= amplitude
         elif t == 'gaussian':
             ls = np.arange(self.lmax + 1)
             sigma = np.sqrt(-2. * np.log(self.spec['beam_cross']) / self.lmax / (self.lmax + 1))
             Cl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
 
-            nl = system.ni_approx_by_comp_lst[k]
-            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
-            amplitude = 1. / nl[l_cross]
-            Cl *= amplitude
+        #cross = self.spec.get('cross', None)
+        
+        nl = system.ni_approx_by_comp_lst[k]
+        l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
+        amplitude = 1. / nl[l_cross]
+        Cl *= amplitude / Cl[l_cross] * self.spec.get('relamp', 1)
 
         return Cl
 
@@ -299,11 +305,11 @@ class CrSystem(object):
 
 
         if mask:
-            if 0:
+            if 1:
                 mask = np.zeros(12 * udgrade**2)
                 mask[:] = 1
                 nside = udgrade
-                mask[int(4*udgrade**2) - 2*udgrade:int(8*udgrade**2)+2*udgrade] = 0
+                mask[int(5.5*udgrade**2) - 2*udgrade:int(6.5*udgrade**2)+2*udgrade] = 0
             else:
                 mask = load_map_cached(mask)
                 mask = mask.copy()
@@ -359,7 +365,7 @@ class CrSystem(object):
 
                     #mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
                     #from .beams import gaussian_beam_by_l
-                    #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '10 deg'))
+                    #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '4 deg'))
                     #mask_ext = sharp.sh_synthesis(nside, mask_lm)
 
                     #healpy.mollzoom(mask_ext - mask_ud)
@@ -374,7 +380,7 @@ class CrSystem(object):
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
                     if mask is not None:
                         mask_ud = healpy.ud_grade(mask, nside_of(mixing_maps[nu, k]), order_in='RING', order_out='RING', power=0)
-                        mask_ud[mask_ud != 0] = 1
+                        #mask_ud[mask_ud != 0] = 1
                         mixing_maps[nu, k] *= mask_ud
 
                 nu += 1
