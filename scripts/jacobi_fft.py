@@ -36,7 +36,7 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 128 * w
+nside = 32 * w
 factor = 2048 // nside * w
 
 
@@ -106,7 +106,7 @@ mask_for_sinv[int(5.5*udgrade**2) - 2*udgrade + k * 4 * nside:int(6.5*udgrade**2
 
 
 sinv_solver = cmbcr.SinvSolver(dl * rl**2, mask_for_sinv, split=False, rl=np.ones(dl.shape[0]), #, rl=rl,
-                               nrings=(system.lmax_list[0] + 1) // 2)
+                               nrings=80)
 
 #def solve_mask(b):
 #    x = sinv_solver.solve_alm(b, repeat=2 if SQRTSPLIT else 1, single_v_cycle=False, rtol=1e-3, maxit=50)
@@ -191,10 +191,6 @@ if 0:
     draw()
     1/0
     
-import healpy
-mask_nside = nside
-mask_deg = healpy.ud_grade(system.mask, mask_nside, order_in='RING', order_out='RING', power=-1)
-mask_deg[mask_deg != 0] = 1
 
 def filtered_precond1(u):
     u = u[0]
@@ -212,36 +208,35 @@ sinv_pick = sinv_solver.mask.reshape(2 * sinv_solver.nrings**2) == 0
 def restrict(x):
     self = sinv_solver
     x = x * scatter_l_to_lm(rl)
-    #x = sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=self.lmax_sh)
-    #x = x[sinv_pick]
-    #return x
-    x = self.pickvec(self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=self.lmax_sh)))
+    x = sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=self.lmax_sh)
+    x = x[sinv_pick]
     return x
 
 def prolong(x):
     self = sinv_solver
-    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, self.equator_to_gauss_grid(self.padvec(x)), lmax_sh=self.lmax_sh)
-    #xpad = np.zeros((2 * self.nrings**2))
-    #xpad[sinv_pick] = x
-    #x = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad, lmax_sh=self.lmax_sh)
+    xpad = np.zeros((2 * self.nrings**2))
+    xpad[sinv_pick] = x
+    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad, lmax_sh=self.lmax_sh)
     x = x * scatter_l_to_lm(rl)
     return x
 
-if 0:
 
-    import healpy
-    mask_nside = 16
-    mask_deg = healpy.ud_grade(system.mask, mask_nside, order_in='RING', order_out='RING', power=-1)
-    mask_deg[mask_deg != 0] = 1
-    mask_deg_pick = (mask_deg == 0)
-    def restrict(x):
-        x = sharp.sh_synthesis(mask_nside, x)
-        return x[mask_deg_pick]
+import healpy
+mask_nside = 32
+mask_hp = healpy.ud_grade(system.mask, mask_nside, order_in='RING', order_out='RING', power=0)
+mask_hp[mask_hp != 1] = 0
+mask_hp_pick = (mask_hp == 0)
+def restrict_healpix(x):
+    x = x * scatter_l_to_lm(rl)
+    x = sharp.sh_synthesis(mask_nside, x)
+    return x[mask_hp_pick]
 
-    def prolong(x):
-        xpad = np.zeros(12 * mask_nside**2)
-        xpad[mask_deg_pick] = x
-        return sharp.sh_adjoint_synthesis(system.lmax_list[0], xpad)
+def prolong_healpix(x):
+    xpad = np.zeros(12 * mask_nside**2)
+    xpad[mask_hp_pick] = x
+    x = sharp.sh_adjoint_synthesis(system.lmax_list[0], xpad)
+    x = x * scatter_l_to_lm(rl)
+    return x
 
 
 def ZAZ(x):
@@ -251,19 +246,53 @@ def ZAZ(x):
     x = restrict(x)
     return x
 
-#ZAZ_dense = hammer(ZAZ, sinv_solver.n)
-#ZAZ_dense += np.eye(ZAZ_dense.shape[0]) * 1e-3 * ZAZ_dense.max()
-#ZAZ_inv = np.linalg.inv(ZAZ_dense)
+if 1:  # USE healpix dense system instead
 
-
-def mask_dense_solver(x):
-    x = restrict(x)
-    x = np.dot(ZAZ_inv, x)
-    return prolong(x)
+    prolong = prolong_healpix
+    restrict = restrict_healpix
+    N_MASK = int(mask_hp_pick.sum())
+else:
+    N_MASK = int(sinv_pick.sum())
     
-#solve_mask = mask_dense_solver
+
+
+if 1:
+    ZAZ_dense = hammer(ZAZ, N_MASK)
+    ZAZ_dense += np.eye(ZAZ_dense.shape[0]) * 1e-3 * ZAZ_dense.max()
+    ZAZ_inv = np.linalg.inv(ZAZ_dense)
+
+    def mask_dense_solver(x):
+        x = restrict(x)
+        x = np.dot(ZAZ_inv, x)
+        return prolong(x)
+
+    solve_mask = mask_dense_solver
 #1/0
 
+lmax = system.lmax_list[0]
+u = np.arange(2 * sinv_solver.nrings**2, dtype=float)#.reshape(sinv_solver.nrings, 2 * sinv_solver.nrings)
+ush = sharp.sh_analysis_gauss(sinv_solver.nrings - 1, u, lmax_sh=lmax)
+
+x1 = prolong_healpix(restrict_healpix(ush.copy()))
+x2 = prolong(restrict(ush.copy()))
+
+#clf()
+#plot(restrict_healpix(ush))
+#plot(restrict(ush))
+
+#x1 = prolong_healpix(restrict_healpix(ush))
+#x2 = prolong(restrict(ush))
+
+#clf()
+#mollview(sharp.sh_synthesis(nside, x1), sub=211)
+#mollview(sharp.sh_synthesis(nside, x2), sub=212)
+#draw()
+
+    
+
+#1/0
+
+    
 
 def precond_both(b):
 
@@ -323,7 +352,7 @@ for i, (x, r, delta_new) in enumerate(solver):
         semilogy(norm_by_l(x[0] - x0[0]) / norm_by_l(x0[0]))
 
     print 'it', i
-    if i > 10:
+    if i > 20:
         break
 
 def errmap():

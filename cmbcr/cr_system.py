@@ -305,7 +305,7 @@ class CrSystem(object):
 
 
         if mask:
-            if 1:
+            if 0:
                 mask = np.zeros(12 * udgrade**2)
                 mask[:] = 1
                 nside = udgrade
@@ -360,7 +360,7 @@ class CrSystem(object):
 
                 if mask is not None:
                     # First, udgrade the mask to same resolution as ninv_map. Then, extend it with one beam-size.
-                    mask_ud = healpy.ud_grade(mask, nside, order_in='RING', order_out='RING', power=-1)
+                    mask_ud = healpy.ud_grade(mask, nside, order_in='RING', order_out='RING', power=0)
                     mask_ud[mask_ud != 0] = 1
 
                     #mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
@@ -380,7 +380,7 @@ class CrSystem(object):
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
                     if mask is not None:
                         mask_ud = healpy.ud_grade(mask, nside_of(mixing_maps[nu, k]), order_in='RING', order_out='RING', power=0)
-                        #mask_ud[mask_ud != 0] = 1
+                        mask_ud[mask_ud != 0] = 1
                         mixing_maps[nu, k] *= mask_ud
 
                 nu += 1

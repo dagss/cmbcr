@@ -8,7 +8,7 @@ model:
 
   components:
     - name: cmb
-      lmax: 6000
+      lmax: 8000
       mixmat: '06'
       prior:
         #type: gaussian
@@ -21,7 +21,7 @@ model:
         #type: file
         #filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
 
-        cross: 0.05
+        cross: 0.01
         
         type: power
         beta: -2
