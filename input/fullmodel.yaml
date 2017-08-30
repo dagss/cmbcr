@@ -8,13 +8,17 @@ model:
       lmax: 4000
       mixmat: '06'
       prior:
-        beta: -2.5
-        lcross: 3000
+        #beta: -2.5
+        #lcross: 3000
+        type: file
+        compress: false
+        filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
 
     - name: dust
       lmax: 5000
       mixmat: '01'
       prior:
+        type: power
         beta: -2.5
         lcross: 4000
 
@@ -22,6 +26,7 @@ model:
       lmax: 600
       mixmat: '02'
       prior:
+        type: power
         beta: -2.5
         lcross: 300
 

@@ -65,7 +65,7 @@ class HarmonicPrior(object):
             Cl[2:] /= ls * (ls + 1) / 2 / np.pi
             Cl[0] = Cl[1] = Cl[2]
 
-            if self.lmax < self.fullres_lmax:
+            if self.lmax < self.fullres_lmax and self.spec.get('compress', False):
                 from scipy.interpolate import interp1d
                 Cl_func = interp1d(np.arange(Cl.shape[0]), Cl)
                 Cl = Cl_func(np.linspace(0, self.fullres_lmax, self.lmax + 1))
@@ -84,13 +84,17 @@ class HarmonicPrior(object):
             sigma = np.sqrt(-2. * np.log(self.spec['beam_cross']) / self.lmax / (self.lmax + 1))
             Cl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
 
-        #cross = self.spec.get('cross', None)
-        
-        nl = system.ni_approx_by_comp_lst[k]
-        l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
-        amplitude = 1. / nl[l_cross]
-        Cl *= amplitude / Cl[l_cross] * self.spec.get('relamp', 1)
+        cross = self.spec.get('cross', None)
+        if cross is None:
+            # use amplitude from file
+            assert t == 'file'
+            amplitude = 1
+        else:
+            nl = system.ni_approx_by_comp_lst[k]
+            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
+            amplitude = 1. / nl[l_cross] / Cl[l_cross]
 
+        Cl *= amplitude * self.spec.get('relamp', 1)
         return Cl
 
 
@@ -134,7 +138,7 @@ class CrSystem(object):
         self.rot_ang = rot_ang
         self.flat_mixing = flat_mixing
 
-    def prepare_prior(self, set_wl_dl=True):
+    def prepare_prior(self, set_wl_dl=True, wl=None):
         self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
         for nu in range(self.band_count):
             for k in range(self.comp_count):
@@ -164,11 +168,10 @@ class CrSystem(object):
                 self.dl_list.append(1. / Cl)
                 self.wl_list.append(np.ones(self.lmax_list[k] + 1))
 
+    def set_wl_list(self, wl_list):
+        self.wl_list = wl_list
+
     def prepare(self, use_healpix=False):
-        ## TODO DEBUG
-        #for bl in self.bl_list:
-        #    bl[:] = 1
-        ## END DEBUG
         # Make G-L ninv-maps, possibly rotated
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
@@ -194,6 +197,15 @@ class CrSystem(object):
             self.dl_list[k] *= self.component_scale[k]**2
             self.ni_approx_by_comp_lst[k] *= self.component_scale[k]**2
 
+        # Resample mask to Gauss-Legendre grid
+        if self.mask is not None:
+            mask_lm = sharp.sh_analysis(self.lmax_mixing_pix, self.mask)
+            self.mask_gauss_grid = sharp.sh_synthesis_gauss(self.lmax_mixing_pix, mask_lm)
+            self.mask_gauss_grid[self.mask_gauss_grid < 0.8] = 0
+            self.mask_gauss_grid[self.mask_gauss_grid >= 0.8] = 1
+        else:
+            self.mask_gauss_grid = None
+
         self.mixing_maps_ugrade = {}
         for nu in range(self.band_count):
             for k in range(self.comp_count):
@@ -201,6 +213,10 @@ class CrSystem(object):
                     self.mixing_maps_ugrade[nu, k] = (
                         rotate_mixing(self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
                         * self.component_scale[k])
+
+                    if self.mask_gauss_grid is not None:
+                        self.mixing_maps_ugrade[nu, k] *= self.mask_gauss_grid
+                    
                     self.mixing_maps[nu, k] *= self.component_scale[k]
                     if self.flat_mixing:
                         assert False
@@ -216,18 +232,18 @@ class CrSystem(object):
 
         nside_mixing = nside_of(self.mixing_maps[0, 0])
         x_pix_lst = [
-            sharp.sh_synthesis(nside_mixing,
-                x_lst[k] * scatter_l_to_lm(self.wl_list[k])
-            ) for k in range(self.comp_count)]
+            plan.synthesis(x_lst[k] * scatter_l_to_lm(self.wl_list[k]))
+            for k, plan in enumerate(self.plan_outer_lst)
+            ]
         z_pix_lst = [0] * self.comp_count
 
         for nu in range(self.band_count):
             # Mix components together
-            y = np.zeros(self.mixing_maps[0,0].shape[0])
+            y = np.zeros(self.mixing_maps_ugrade[0,0].shape[0])
             for k in range(self.comp_count):
-                u = x_pix_lst[k] * self.mixing_maps[nu, k]
+                u = x_pix_lst[k] * self.mixing_maps_ugrade[nu, k]
                 y += u
-            y = sharp.sh_analysis(self.lmax_mixed, y) #self.plan_mixed.analysis(y)
+            y = self.plan_mixed.analysis(y)
             # Instrumental beam
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
             # Inverse noise weighting
@@ -243,20 +259,19 @@ class CrSystem(object):
             # Transpose our way out, accumulate result in z_list[icomp];
             # note that z_list will get result from all bands
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
-            y = sharp.sh_adjoint_analysis(nside_mixing, y) #self.plan_mixed.adjoint_analysis(y)
+            y = self.plan_mixed.adjoint_analysis(y)
             for k in range(self.comp_count):
-                u = y * self.mixing_maps[nu, k]
+                u = y * self.mixing_maps_ugrade[nu, k]
                 z_pix_lst[k] += u
 
         z_lst = [
-            sharp.sh_adjoint_synthesis(self.lmax_list[k], z_pix_lst[k])
-             * scatter_l_to_lm(self.wl_list[k])
-            for k in range(self.comp_count)
+            plan.adjoint_synthesis(z_pix_lst[k]) * scatter_l_to_lm(self.wl_list[k])
+            for k, plan in enumerate(self.plan_outer_lst)
             ]
 
         if not skip_prior:
             for k in range(self.comp_count):
-                z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
+                z_lst[k] += scatter_l_to_lm(self.wl_list[k]**2 * self.dl_list[k]) * x_lst[k]
         return z_lst
 
 
@@ -378,10 +393,6 @@ class CrSystem(object):
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
-                    if mask is not None:
-                        mask_ud = healpy.ud_grade(mask, nside_of(mixing_maps[nu, k]), order_in='RING', order_out='RING', power=0)
-                        mask_ud[mask_ud != 0] = 1
-                        mixing_maps[nu, k] *= mask_ud
 
                 nu += 1
 
@@ -396,8 +407,8 @@ class CrSystem(object):
         for k in range(self.comp_count):
             L = lmax or self.lmax_list[k]
             scale = (1 / self.ni_approx_by_comp_lst[k].max())
-            plt.semilogy(1 / self.Cl_list[k][:L + 1] * scale)
-            plt.semilogy(self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted')
+            plt.semilogy(self.wl_list[k]**2 / self.Cl_list[k][:L + 1] * scale)
+            plt.semilogy(self.wl_list[k]**2 * self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted')
         plt.draw()
 
 

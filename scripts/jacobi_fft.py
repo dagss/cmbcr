@@ -49,7 +49,9 @@ full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8
 
 full_res_system.prepare_prior()
 
-
+#clf()
+#full_res_system.plot()
+#1/0
 
 system = cmbcr.downgrade_system(full_res_system, 1. / factor)
 lmax_ninv = 2 * max(system.lmax_list)
@@ -62,6 +64,11 @@ system.set_params(
     )
 
 system.prepare_prior()
+wl_list = [
+    1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0])
+    ]
+system.set_wl_list(wl_list)
+
 system.prepare(use_healpix=True)
 
 if 0:
@@ -71,9 +78,30 @@ if 0:
     nl /= nl.max()
     rl = nl
 else:
-    #rl = cmbcr.fourth_order_beam(system.lmax_list[0], int(0.5 * system.lmax_list[0]), epstreshold=0.5)
+
+    # OK but slower: extend with (2,2)
+    # Faster: gaussian(2 deg)
+
+    #rl = cmbcr.standard_needlet_by_l(2, int(system.lmax_list[0]) + 14)[:-14]
+    #i = rl.argmax()
+    #rl[:i] = 1
+    
+    #rl = cmbcr.fourth_order_beam(system.lmax_list[0], int(0.5 * system.lmax_list[0]), epstreshold=0.1)
     #rl = np.ones(system.lmax_list[0] + 1)
-    rl = cmbcr.gaussian_beam_by_l(system.lmax_list[0], '1.25 deg')
+
+    #rl = cmbcr.gaussian_beam_by_l(system.lmax_list[0], '2 deg')
+
+    dl = system.dl_list[0]
+    rl = np.ones(dl.shape[0])
+
+    dl = system.dl_list[0] * system.wl_list[0]**2
+    #dl_sinv = system.dl_list[0] * rl**2
+    
+    #dl *= cmbcr.gaussian_beam_by_l(system.lmax_list[0], '2 deg')**2
+    
+    #nl = cmbcr.standard_needlet_by_l(2, int(2 * system.lmax_list[0]))
+    #i = nl.argmax()
+    #dl_sinv = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
 
 #system.dl_list[0] *= rl**2
 
@@ -89,7 +117,6 @@ if 'plot' in sys.argv:
 
 SQRTSPLIT = False
 
-dl = system.dl_list[0]
 
 if SQRTSPLIT:
     #dl = np.sqrt(dl) ## why does it converge faster with this in place?
@@ -98,15 +125,16 @@ if SQRTSPLIT:
     
 #sinv_solver = cmbcr.SinvSolver(dl, system.mask, b=1.2, lmax_factor=6, split=False)
 
-udgrade = 2048
-mask_for_sinv = np.ones(12*udgrade**2)
-k = 0 * (2048//nside)
-mask_for_sinv[int(5.5*udgrade**2) - 2*udgrade + k * 4 * nside:int(6.5*udgrade**2)+2*udgrade - k * 4 * udgrade] = 0
+#udgrade = 2048
+#mask_for_sinv = np.ones(12*udgrade**2)
+#k = 0 * (2048//nside)
+#mask_for_sinv[int(5.5*udgrade**2) - 2*udgrade + k * 4 * nside:int(6.5*udgrade**2)+2*udgrade - k * 4 * udgrade] = 0
+
+mask_for_sinv = system.mask_gauss_grid
 
 
-
-sinv_solver = cmbcr.SinvSolver(dl * rl**2, mask_for_sinv, split=False, rl=np.ones(dl.shape[0]), #, rl=rl,
-                               nrings=80)
+sinv_solver = cmbcr.SinvSolver(dl, mask_for_sinv, split=False, # rl=np.ones(dl.shape[0]), #, rl=rl,
+                               nrings=system.lmax_mixing_pix + 1)
 
 #def solve_mask(b):
 #    x = sinv_solver.solve_alm(b, repeat=2 if SQRTSPLIT else 1, single_v_cycle=False, rtol=1e-3, maxit=50)
@@ -122,7 +150,7 @@ def solve_mask(b):
     kw = {'rtol': 1e-3}
     
     x = x * scatter_l_to_lm(rl)
-    x = self.pickvec(self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=self.lmax_sh)))
+    x = self.pickvec(self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=system.lmax_list[0])))
     x, _, _ = self.solve_mask(x, *args, **kw)
 
     if SQRTSPLIT:
@@ -133,7 +161,7 @@ def solve_mask(b):
 
 
     
-    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, self.equator_to_gauss_grid(self.padvec(x)), lmax_sh=self.lmax_sh)
+    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, self.equator_to_gauss_grid(self.padvec(x)), lmax_sh=system.lmax_list[0])
     x = x * scatter_l_to_lm(rl)
 
     return x
@@ -246,7 +274,7 @@ def ZAZ(x):
     x = restrict(x)
     return x
 
-if 1:  # USE healpix dense system instead
+if 0:  # USE healpix dense system instead
 
     prolong = prolong_healpix
     restrict = restrict_healpix
@@ -301,7 +329,7 @@ def precond_both(b):
     elif 0:
         x = [solve_mask(b[0])]
         return x
-    elif 1:
+    elif 0:
         x = precond_1.apply(b)
         x = lstadd(x, [solve_mask(b[0])])
         return x
@@ -311,12 +339,12 @@ def precond_both(b):
         return x
     else:
         x = b
-        x = lstadd(x, lstscale(0.5, precond_1.apply(b)))
+        x = lstadd(x, lstscale(0.1, precond_1.apply(b)))
         r = lstsub(b, system.matvec(x))
-        x = lstadd(x, [solve_mask(r[0])])
+        x = lstadd(x, [0.01 * solve_mask(r[0])])
 
         r = lstsub(b, system.matvec(x))
-        x = lstadd(x, lstscale(0.5, precond_1.apply(b)))
+        x = lstadd(x, lstscale(0.1, precond_1.apply(b)))
 #        x = lstadd(x, precond_1.apply(r))
 
         return x
@@ -358,9 +386,9 @@ for i, (x, r, delta_new) in enumerate(solver):
 def errmap():
     clf()
     e = sharp.sh_synthesis(nside, x0[0]-x[0])
-    mollview(e, sub=311, max=e.max(), min=e.min(), xsize=2000)
-    mollview(e * mask_deg, sub=312, max=e.max(), min=e.min(), xsize=2000)
-    mollview(e * (1 - mask_deg), sub=313, max=e.max(), min=e.min(), xsize=2000)
+    mollview(e, sub=111, max=e.max(), min=e.min(), xsize=2000)
+    #mollview(e * mask_deg, sub=312, max=e.max(), min=e.min(), xsize=2000)
+    #mollview(e * (1 - mask_deg), sub=313, max=e.max(), min=e.min(), xsize=2000)
     draw()
     
 #clf()

@@ -2,38 +2,26 @@
 model:
   #mask: /store/dagss/planckdata/commander_mask_n256_likelihood_v1.fits
   #mask: /home/dagss/astro/cmbcr/mask_2048.fits
-  mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
+  #mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
   
   mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
 
   components:
     - name: cmb
-      lmax: 8000
+      lmax: 6000
       mixmat: '06'
       prior:
-        #type: gaussian
-        #l_eps: 4000
-        #eps: 0.01
-
-        #relamp: 1000000
-
         
         #type: file
+        #compress: false
         #filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
 
-        cross: 0.01
+        cross: 0.0001
         
         type: power
         beta: -2
 
-        
-        #beam_cross: 0.1 # for gaussian only
-        #cross: 0.5
-        
-
-        #beta: -0.5  #-1.5
-        #lcross: 2000
-        
+  
 #    - name: dust
 #      lmax: 3000
 #      mixmat: '01'
@@ -51,8 +39,34 @@ datasets:
 
 
     bands:
-#      - name: '857-2'
-#        mixmat: '01'
+#      - name: '100-ds1'
+#        mixmat: '16'
+        
       - name: '143-ds1'
         mixmat: '10'
         
+#      - name: '217-4'
+#        mixmat: '09'
+       
+#      - name: '353-2'
+#        mixmat: '05'
+        
+#      - name: '857-2'
+#        mixmat: '01'
+
+  - name: planck_lfi
+    path: /store/dagss/planckdata/32band
+    map_template: map_dx11d_r2t_zc_{band[name]}_1024_fullres_full.fits
+    rms_template: rms_dx11d_r2t_{band[name]}_1024_fullres_full.fits
+    beam_template: beam_dx11d2_uni_{band[name]}.fits
+
+    bands: []
+#      - name: '030'
+#        mixmat: '17'
+
+#      - name: '044'
+#        mixmat: '18'
+
+#      - name: '070-18_23'
+#        mixmat: '19'
+

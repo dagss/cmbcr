@@ -64,7 +64,7 @@ def create_mixing_matrix(system, lmax, alpha_lst):
 
     for k in range(system.comp_count):
         wl_arr[k, :] = pad_or_trunc(np.sqrt(system.wl_list[k]), lmax + 1)
-        dl_arr[k, :] = pad_or_trunc(np.sqrt(system.dl_list[k]), lmax + 1)
+        dl_arr[k, :] = pad_or_trunc(np.sqrt(system.dl_list[k]) * system.wl_list[k], lmax + 1)
         
     for nu in range(system.band_count):
         bl_arr[nu, :] = pad_or_trunc(system.bl_list[nu], lmax + 1)

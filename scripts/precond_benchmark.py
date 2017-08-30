@@ -67,6 +67,11 @@ system.set_params(
 system.prepare_prior()
 system.prepare(use_healpix=True)
 
+wl_list = [
+    (1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0])) * 0 + 9.0
+    ]
+system.set_wl_list(wl_list)
+
 
 rng = np.random.RandomState(1)
 
@@ -342,9 +347,9 @@ benchmarks = [
     ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='bnn'),
     ##     ),
     Benchmark(
-        'Psuedo-inverse (add1)',
+        'Psuedo-inverse (nomask)',
         '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add1'),
+        cmbcr.PsuedoInversePreconditioner(system),
         ),
     #Benchmark(
     #    'Psuedo-inverse (MG)',
