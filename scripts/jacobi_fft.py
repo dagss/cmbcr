@@ -64,10 +64,25 @@ system.set_params(
     )
 
 system.prepare_prior()
-wl_list = [
-    1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0])
-    ]
-system.set_wl_list(wl_list)
+l = np.arange(system.lmax_list[0] + 1)
+#wl_list = [
+#    np.exp(-0.006 * (l - 60)**2) * 1.2
+
+#    #1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0])
+#    ]
+#system.set_wl_list(wl_list)
+
+
+def needletify_dl(b, lmax_factor, dl):
+    lmax = int(lmax_factor * dl.shape[0]) - 1
+    if 1:
+        nl = cmbcr.standard_needlet_by_l(b, lmax)
+        i = nl.argmax()
+        return np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
+    else:
+        # FAILED!
+        nl = fourth_order_beam(lmax, int(0.1 * lmax))
+        return np.concatenate([dl, nl * dl[-1] / nl[0]])
 
 system.prepare(use_healpix=True)
 
@@ -92,10 +107,9 @@ else:
     #rl = cmbcr.gaussian_beam_by_l(system.lmax_list[0], '2 deg')
 
     dl = system.dl_list[0]
-    rl = np.ones(dl.shape[0])
 
-    dl = system.dl_list[0] * system.wl_list[0]**2
-    #dl_sinv = system.dl_list[0] * rl**2
+    dl_sinv = needletify_dl(1.7, 3, system.dl_list[0])## * rl**2
+    rl = np.ones(dl_sinv.shape[0])
     
     #dl *= cmbcr.gaussian_beam_by_l(system.lmax_list[0], '2 deg')**2
     
@@ -119,8 +133,7 @@ SQRTSPLIT = False
 
 
 if SQRTSPLIT:
-    #dl = np.sqrt(dl) ## why does it converge faster with this in place?
-    dl = np.sqrt(dl)
+    dl_sinv = np.sqrt(dl_sinv)
 
     
 #sinv_solver = cmbcr.SinvSolver(dl, system.mask, b=1.2, lmax_factor=6, split=False)
@@ -133,7 +146,7 @@ if SQRTSPLIT:
 mask_for_sinv = system.mask_gauss_grid
 
 
-sinv_solver = cmbcr.SinvSolver(dl, mask_for_sinv, split=False, # rl=np.ones(dl.shape[0]), #, rl=rl,
+sinv_solver = cmbcr.SinvSolver(dl_sinv, mask_for_sinv, split=False, # rl=np.ones(dl.shape[0]), #, rl=rl,
                                nrings=system.lmax_mixing_pix + 1)
 
 #def solve_mask(b):
@@ -147,7 +160,7 @@ def solve_mask(b):
     x = b
 
     args = ()
-    kw = {'rtol': 1e-3}
+    kw = {'rtol': 1e-6}
     
     x = x * scatter_l_to_lm(rl)
     x = self.pickvec(self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=system.lmax_list[0])))
@@ -233,19 +246,21 @@ def filtered_precond1(u):
     
 
 sinv_pick = sinv_solver.mask.reshape(2 * sinv_solver.nrings**2) == 0
-def restrict(x):
+def restrict(x, lmax=None):
     self = sinv_solver
-    x = x * scatter_l_to_lm(rl)
-    x = sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=self.lmax_sh)
+    lmax = lmax or self.lmax
+    x = x * scatter_l_to_lm(rl[:lmax + 1])
+    x = sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=lmax)
     x = x[sinv_pick]
     return x
 
-def prolong(x):
+def prolong(x, lmax=None):
     self = sinv_solver
+    lmax = lmax or self.lmax
     xpad = np.zeros((2 * self.nrings**2))
     xpad[sinv_pick] = x
-    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad, lmax_sh=self.lmax_sh)
-    x = x * scatter_l_to_lm(rl)
+    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad, lmax_sh=lmax)
+    x = x * scatter_l_to_lm(rl[:lmax + 1])
     return x
 
 
@@ -268,10 +283,10 @@ def prolong_healpix(x):
 
 
 def ZAZ(x):
-    x = prolong(x)
-    x *= scatter_l_to_lm(system.dl_list[0])
-    #x = system.matvec([x])[0]
-    x = restrict(x)
+    x = prolong(x, lmax=sinv_solver.lmax_sh)
+    #x *= scatter_l_to_lm(system.dl_list[0])
+    x *= scatter_l_to_lm(dl_sinv)
+    x = restrict(x, lmax=sinv_solver.lmax_sh)
     return x
 
 if 0:  # USE healpix dense system instead
@@ -286,8 +301,8 @@ else:
 
 if 1:
     ZAZ_dense = hammer(ZAZ, N_MASK)
-    ZAZ_dense += np.eye(ZAZ_dense.shape[0]) * 1e-3 * ZAZ_dense.max()
-    ZAZ_inv = np.linalg.inv(ZAZ_dense)
+    ZAZ_dense += np.eye(ZAZ_dense.shape[0])# * 1e-3 * ZAZ_dense.max()
+    ZAZ_inv = np.linalg.pinv(ZAZ_dense)
 
     def mask_dense_solver(x):
         x = restrict(x)
@@ -301,24 +316,6 @@ lmax = system.lmax_list[0]
 u = np.arange(2 * sinv_solver.nrings**2, dtype=float)#.reshape(sinv_solver.nrings, 2 * sinv_solver.nrings)
 ush = sharp.sh_analysis_gauss(sinv_solver.nrings - 1, u, lmax_sh=lmax)
 
-x1 = prolong_healpix(restrict_healpix(ush.copy()))
-x2 = prolong(restrict(ush.copy()))
-
-#clf()
-#plot(restrict_healpix(ush))
-#plot(restrict(ush))
-
-#x1 = prolong_healpix(restrict_healpix(ush))
-#x2 = prolong(restrict(ush))
-
-#clf()
-#mollview(sharp.sh_synthesis(nside, x1), sub=211)
-#mollview(sharp.sh_synthesis(nside, x2), sub=212)
-#draw()
-
-    
-
-#1/0
 
     
 
@@ -329,7 +326,7 @@ def precond_both(b):
     elif 0:
         x = [solve_mask(b[0])]
         return x
-    elif 0:
+    elif 1:
         x = precond_1.apply(b)
         x = lstadd(x, [solve_mask(b[0])])
         return x

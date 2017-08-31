@@ -68,7 +68,7 @@ system.prepare_prior()
 system.prepare(use_healpix=True)
 
 wl_list = [
-    (1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0])) * 0 + 9.0
+    (1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0]))
     ]
 system.set_wl_list(wl_list)
 

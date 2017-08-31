@@ -63,7 +63,7 @@ def create_mixing_matrix(system, lmax, alpha_lst):
     dl_arr = np.zeros((system.comp_count, lmax + 1), order='F')
 
     for k in range(system.comp_count):
-        wl_arr[k, :] = pad_or_trunc(np.sqrt(system.wl_list[k]), lmax + 1)
+        wl_arr[k, :] = pad_or_trunc(system.wl_list[k], lmax + 1)
         dl_arr[k, :] = pad_or_trunc(np.sqrt(system.dl_list[k]) * system.wl_list[k], lmax + 1)
         
     for nu in range(system.band_count):
@@ -143,6 +143,7 @@ class PsuedoInversePreconditioner(object):
 
 
     def apply(self, x_lst):
+        #x_lst = lstscale(1/10., x_lst)
         x_lst = apply_block_diagonal_pinv_transpose(self.system, self.Uplus, x_lst)
         c_h = []
         for nu in range(self.system.band_count):
@@ -161,7 +162,9 @@ class PsuedoInversePreconditioner(object):
             c_h.append(u)
         for k in range(self.system.comp_count):
             c_h.append(x_lst[self.system.band_count + k])
-        return apply_block_diagonal_pinv(self.system, self.Uplus, c_h)
+        x_lst = apply_block_diagonal_pinv(self.system, self.Uplus, c_h)
+        #x_lst = lstscale(1/10., x_lst)
+        return x_lst
 
 
 class PsuedoInverseWithMaskPreconditioner(object):
@@ -197,6 +200,7 @@ class PsuedoInverseWithMaskPreconditioner(object):
         return [self.filter_vec(k, x_lst[k], neg) for k in range(self.system.comp_count)]
     
     def solve_under_mask(self, r_h_lst):
+        1/0
         c_h_lst = []
         for k in range(self.system.comp_count):
             r_H = r_h_lst[k]

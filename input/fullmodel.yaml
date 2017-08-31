@@ -5,7 +5,7 @@ model:
 
   components:
     - name: cmb
-      lmax: 4000
+      lmax: 6000
       mixmat: '06'
       prior:
         #beta: -2.5
@@ -15,20 +15,20 @@ model:
         filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
 
     - name: dust
-      lmax: 5000
+      lmax: 6000
       mixmat: '01'
       prior:
         type: power
         beta: -2.5
-        lcross: 4000
+        cross: 0.01
 
     - name: synch
-      lmax: 600
+      lmax: 6000
       mixmat: '02'
       prior:
-        type: power
-        beta: -2.5
-        lcross: 300
+        type: gaussian
+        amplitude: 500000
+        fwhm: '30 min'
 
 
 datasets:

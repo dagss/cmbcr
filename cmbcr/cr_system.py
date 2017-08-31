@@ -13,6 +13,7 @@ from .mmajor import scatter_l_to_lm
 from . import sharp
 from .utils import timed, pad_or_truncate_alm
 from .healpix import nside_of
+from .beams import fwhm_to_sigma
 
 __all__ = ['CrSystem', 'downgrade_system']
 
@@ -81,13 +82,14 @@ class HarmonicPrior(object):
             ## Cl *= amplitude
         elif t == 'gaussian':
             ls = np.arange(self.lmax + 1)
-            sigma = np.sqrt(-2. * np.log(self.spec['beam_cross']) / self.lmax / (self.lmax + 1))
-            Cl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
+            sigma = fwhm_to_sigma(self.spec['fwhm'])
+            ##sigma = np.sqrt(-2. * np.log(self.spec['beam_cross']) / self.lmax / (self.lmax + 1))
+            Cl = self.spec['amplitude'] * np.exp(-0.5 * ls * (ls + 1) * sigma**2)
 
         cross = self.spec.get('cross', None)
         if cross is None:
             # use amplitude from file
-            assert t == 'file'
+            assert t in ('file', 'gaussian')
             amplitude = 1
         else:
             nl = system.ni_approx_by_comp_lst[k]
@@ -272,6 +274,7 @@ class CrSystem(object):
         if not skip_prior:
             for k in range(self.comp_count):
                 z_lst[k] += scatter_l_to_lm(self.wl_list[k]**2 * self.dl_list[k]) * x_lst[k]
+
         return z_lst
 
 
@@ -404,11 +407,12 @@ class CrSystem(object):
     def plot(self, lmax=None):
         from matplotlib import pyplot as plt
         #plt.clf()
+        colors = ['red', 'green', 'blue']
         for k in range(self.comp_count):
             L = lmax or self.lmax_list[k]
-            scale = (1 / self.ni_approx_by_comp_lst[k].max())
-            plt.semilogy(self.wl_list[k]**2 / self.Cl_list[k][:L + 1] * scale)
-            plt.semilogy(self.wl_list[k]**2 * self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted')
+            scale = scale = (1 / self.ni_approx_by_comp_lst[k].max())
+            plt.semilogy(self.wl_list[k]**2 / self.Cl_list[k][:L + 1] * scale, color=colors[k])
+            plt.semilogy(self.wl_list[k]**2 * self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted', color=colors[k])
         plt.draw()
 
 

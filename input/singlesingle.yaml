@@ -2,7 +2,7 @@
 model:
   #mask: /store/dagss/planckdata/commander_mask_n256_likelihood_v1.fits
   #mask: /home/dagss/astro/cmbcr/mask_2048.fits
-  #mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
+  mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
   
   mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
 
@@ -16,10 +16,10 @@ model:
         #compress: false
         #filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
 
-        cross: 0.0001
         
         type: power
-        beta: -2
+        beta: -4
+        cross: 0.15
 
   
 #    - name: dust
