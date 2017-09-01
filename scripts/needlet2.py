@@ -57,14 +57,17 @@ dl = l**2
 #dl = 1 / Cl_cmb[:lmax_sh + 1]
 
 #nl = cmbcr.standard_needlet_by_l(1.2, 5 * dl.shape[0] - 1)
-nl = cmbcr.standard_needlet_by_l(1.5, 3 * dl.shape[0] - 1)
+nl = cmbcr.standard_needlet_by_l(1.3, 3 * dl.shape[0] - 1)
 i = nl.argmax()
 new_dl_1 = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
 
 
-nl = cmbcr.standard_needlet_by_l(2, 2 * dl.shape[0] - 1)
-i = nl.argmax()
-new_dl_2 = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
+rl = cmbcr.standard_needlet_by_l(2, dl.shape[0] - 1)
+i = rl.argmax()
+rl[:i] = 1
+new_dl_2 = dl * rl
+#nl = cmbcr.standard_needlet_by_l(2, 2 * dl.shape[0] - 1)
+#new_dl_2 = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
 
 
 lmax_sh = dl.shape[0] - 1
@@ -79,20 +82,23 @@ ax3 = fig.add_subplot(3,1,3)
 N = 8
 ipix = np.linspace(0, N, 1000)
 ax1.plot(ipix, cmbcr.beam_by_theta(dl, ipix * pw))
-ax1.plot(ipix, cmbcr.beam_by_theta(new_dl_1, ipix * pw))
-ax1.plot(ipix, cmbcr.beam_by_theta(new_dl_2, ipix * pw))
+ax1.plot(ipix, cmbcr.beam_by_theta(new_dl_1, ipix * pw), label='dl_1')
+ax1.plot(ipix, cmbcr.beam_by_theta(new_dl_2, ipix * pw), label='dl_2')
+ax1.legend()
 for i in range(N):
     ax1.axvline(i, color='black', ls='dotted')
 
 ax2.semilogy(ipix, np.abs(cmbcr.beam_by_theta(dl, ipix * pw)))
-ax2.semilogy(ipix, np.abs(cmbcr.beam_by_theta(new_dl_1, ipix * pw)))
-ax2.semilogy(ipix, np.abs(cmbcr.beam_by_theta(new_dl_2, ipix * pw)))
+ax2.semilogy(ipix, np.abs(cmbcr.beam_by_theta(new_dl_1, ipix * pw)), label='dl_1')
+ax2.semilogy(ipix, np.abs(cmbcr.beam_by_theta(new_dl_2, ipix * pw)), label='dl_2')
+ax2.legend()
 #for i in range(N):
 #    ax2.axvline(i, color='black', ls='dotted')
 
     
-ax3.semilogy(new_dl_1)
-ax3.semilogy(new_dl_2)
+ax3.semilogy(new_dl_1, label='dl_1')
+ax3.semilogy(new_dl_2, label='dl_2')
+ax3.legend()
 ax3.set_ylim((1e-3, new_dl_1.max() * 2))
 
 draw()

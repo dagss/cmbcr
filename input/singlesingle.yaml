@@ -12,14 +12,14 @@ model:
       mixmat: '06'
       prior:
         
-        #type: file
-        #compress: false
-        #filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
+        type: file
+        compress: true
+        filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
 
         
-        type: power
-        beta: -4
-        cross: 0.15
+        #type: power
+        #beta: -6
+        #cross: 0.15
 
   
 #    - name: dust

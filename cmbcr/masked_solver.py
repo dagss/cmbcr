@@ -1,6 +1,7 @@
 from __future__ import division
 import numpy as np
 from scipy.sparse import dok_matrix
+import scipy
 
 from .beams import standard_needlet_by_l, fourth_order_beam, gaussian_beam_by_l
 from . import sharp
@@ -128,15 +129,33 @@ class SinvSolver(object):
         ntheta = self.stop_ring - self.start_ring
         nphi = 2 * self.nrings
         self.shape = (ntheta, nphi)
-        
-        unitvec = np.zeros((ntheta, nphi))
-        unitvec[ntheta // 2, nphi // 2] = 1
 
+        nrings_dl = dl.shape[0]
+        
+        unitvec_hi = np.zeros((nrings_dl, 2 * nrings_dl))
+        unitvec_hi[nrings_dl // 2, nrings_dl] = 1
+
+
+        
         u = sharp.sh_adjoint_synthesis_gauss(self.nrings - 1, self.equator_to_gauss_grid(unitvec), lmax_sh=self.lmax_sh)
         u *= scatter_l_to_lm(self.extended_dl)
         opimage = self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, u, lmax_sh=self.lmax_sh))
 
+        #self.outer_dl_fft = cl_to_flatsky(self.extended_dl, self.shape[0], self.shape[1], self.lmax)
         self.outer_dl_fft = operator_image_to_power_spectrum(unitvec, opimage)
+        #self.outer_dl_fft *= img[0,0] / self.outer_dl_fft[0,0]
+
+        ni, nj = self.outer_dl_fft.shape
+        omega = self.ridge * self.outer_dl_fft.max()
+        for i in range(ni // 2):
+            for j in range(nj // 2):
+                if np.sqrt(i**2 + j**2) > np.sqrt((ni//4)**2 + (nj//4)**2):
+                    self.outer_dl_fft[i, j] += omega
+                    self.outer_dl_fft[-i, -j] += omega
+                    self.outer_dl_fft[-i, j] += omega
+                    self.outer_dl_fft[i, -j] += omega
+
+        
         self.split = split
         if self.split:
             self.inner_dl_fft = np.sqrt(self.outer_dl_fft)
@@ -159,11 +178,11 @@ class SinvSolver(object):
         u = np.zeros(self.n)
         u[self.n // 2] = 1
         self.ridge_value = 0
-        self.ridge_value = ridge * self.outer_matvec(u)[self.n // 2]
+        self.ridge_value = 0 #ridge * self.outer_matvec(u)[self.n // 2]
 
-        for level, smoother in zip(self.levels, self.smoothers):
-            level.ridge_value = self.ridge_value
-            smoother.inv_diag = 1 / level.compute_diagonal()
+        ## for level, smoother in zip(self.levels, self.smoothers):
+        ##     level.ridge_value = self.ridge_value
+        ##     smoother.inv_diag = 1 / level.compute_diagonal()
         
 
     def restrict(self, u, lmax=None):
@@ -232,11 +251,12 @@ class SinvSolver(object):
             if x0 is not None:
                 e = np.linalg.norm(x0 - x) / x0_norm
                 errlst.append(e)
-                print 'iteration {}, res={}, err={}'.format(i, r, e)
+                #print 'iteration {}, res={}, err={}'.format(i, r, e)
             else:
                 pass
-                print 'iteration {}, res={}'.format(i, r)
+                #print 'iteration {}, res={}'.format(i, r)
             if r < rtol or i > maxit:
+                print 'breaking', r, repr(rtol), i, maxit
                 break
 
         return x, reslst, errlst
@@ -324,7 +344,7 @@ class DiagonalSmoother(object):
         self.inv_diag = 1 / self.diag
 
     def apply(self, u):
-        return self.inv_diag * u
+        return 0.4 * self.inv_diag * u
 
 
 def v_cycle(ilevel, levels, smoothers, b):
@@ -338,7 +358,7 @@ def v_cycle(ilevel, levels, smoothers, b):
         for i in range(1):
             x += smoothers[ilevel].apply(b - level.matvec(x))
 
-        for i in range(2):
+        for i in range(1):
             r_h = b - level.matvec(x)
 
             r_H = coarsen(level, next_level, r_h)

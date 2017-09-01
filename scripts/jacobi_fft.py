@@ -49,9 +49,6 @@ full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8
 
 full_res_system.prepare_prior()
 
-#clf()
-#full_res_system.plot()
-#1/0
 
 system = cmbcr.downgrade_system(full_res_system, 1. / factor)
 lmax_ninv = 2 * max(system.lmax_list)
@@ -94,34 +91,22 @@ if 0:
     rl = nl
 else:
 
-    # OK but slower: extend with (2,2)
-    # Faster: gaussian(2 deg)
-
-    #rl = cmbcr.standard_needlet_by_l(2, int(system.lmax_list[0]) + 14)[:-14]
-    #i = rl.argmax()
-    #rl[:i] = 1
-    
-    #rl = cmbcr.fourth_order_beam(system.lmax_list[0], int(0.5 * system.lmax_list[0]), epstreshold=0.1)
-    #rl = np.ones(system.lmax_list[0] + 1)
-
-    #rl = cmbcr.gaussian_beam_by_l(system.lmax_list[0], '2 deg')
-
+    lmax_hi = int(1 * system.lmax_list[0])
     dl = system.dl_list[0]
-
-    dl_sinv = needletify_dl(1.7, 3, system.dl_list[0])## * rl**2
-    rl = np.ones(dl_sinv.shape[0])
+    #l = np.arange(1, lmax_hi + 2).astype(float)
     
-    #dl *= cmbcr.gaussian_beam_by_l(system.lmax_list[0], '2 deg')**2
+    ql = cmbcr.standard_needlet_by_l(1.65, lmax_hi, 0.05)
+    i = ql.argmax()
+    ql[:i] = 1
     
-    #nl = cmbcr.standard_needlet_by_l(2, int(2 * system.lmax_list[0]))
-    #i = nl.argmax()
-    #dl_sinv = np.concatenate([dl, nl[i:] * dl[-1] / nl[i]])
+    #dl_new = l**6
+    #dl_new *= dl[0] / dl_new[0]
 
-#system.dl_list[0] *= rl**2
+    
+    dl_ext = dl * ql
+    rl = np.ones(dl_ext.shape[0])
+    
 
-#rl = np.sqrt(nl)
-#rl = nl
-#rl[:] = 1
 
 if 'plot' in sys.argv:
     clf()
@@ -132,62 +117,68 @@ if 'plot' in sys.argv:
 SQRTSPLIT = False
 
 
+dl_sinv = dl_ext
 if SQRTSPLIT:
     dl_sinv = np.sqrt(dl_sinv)
 
     
-#sinv_solver = cmbcr.SinvSolver(dl, system.mask, b=1.2, lmax_factor=6, split=False)
-
-#udgrade = 2048
-#mask_for_sinv = np.ones(12*udgrade**2)
-#k = 0 * (2048//nside)
-#mask_for_sinv[int(5.5*udgrade**2) - 2*udgrade + k * 4 * nside:int(6.5*udgrade**2)+2*udgrade - k * 4 * udgrade] = 0
 
 mask_for_sinv = system.mask_gauss_grid
 
 
 sinv_solver = cmbcr.SinvSolver(dl_sinv, mask_for_sinv, split=False, # rl=np.ones(dl.shape[0]), #, rl=rl,
-                               nrings=system.lmax_mixing_pix + 1)
+                               nrings=system.lmax_mixing_pix + 1,
+                               ridge=0)
 
-#def solve_mask(b):
-#    x = sinv_solver.solve_alm(b, repeat=2 if SQRTSPLIT else 1, single_v_cycle=False, rtol=1e-3, maxit=50)
-#    #if SQRTSPLIT:
-#    #    x = sinv_solver.solve_alm(x, single_v_cycle=False, rtol=1e-3, maxit=50)
-#    return x
 
 def solve_mask(b):
     self = sinv_solver
-    x = b
 
     args = ()
-    kw = {'rtol': 1e-6}
-    
-    x = x * scatter_l_to_lm(rl)
-    x = self.pickvec(self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=system.lmax_list[0])))
-    x, _, _ = self.solve_mask(x, *args, **kw)
+    kw = {'rtol': 1e-2, 'maxit': 1}
 
-    if SQRTSPLIT:
-        npix = 2 * self.nrings**2
-        x *= npix / 4 / np.pi
-    
-        x, _, _ = self.solve_mask(x, *args, **kw)
+    b_restricted = restrict(b, lmax=lmax_hi)
 
+    def matvec_middle(x):
+        xpad = np.zeros((2 * self.nrings**2))
+        xpad[sinv_pick] = x
 
+        alm = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad)
+        alm *= scatter_l_to_lm(dl_sinv)
+        xpad = alm = sharp.sh_synthesis_gauss(self.lmax, alm)
+        return xpad[sinv_pick]
     
-    x = sharp.sh_adjoint_synthesis_gauss(self.lmax, self.equator_to_gauss_grid(self.padvec(x)), lmax_sh=system.lmax_list[0])
-    x = x * scatter_l_to_lm(rl)
+
+    if 1:
+        solver = cg_generator(
+            matvec_middle,
+            b_restricted,
+            #M=self.inner_precond,
+            M=self.inner_precond,#lambda x: self.solve_mask(x, *args, **kw)[0]
+            )
+        
+        b_norm = np.linalg.norm(b_restricted)
+        for i, (x, r, delta_new) in enumerate(solver):
+            res = np.linalg.norm(r) / b_norm
+            print 'MIDDLE IT', i, res
+            if res < 1e-4 or i > 20:
+                break
+
+    else:
+        x = sinv_solver.solve_mask(b_restricted, *args, **kw)[0]
+    
+        
+    x = prolong(x, lmax=lmax_hi)
 
     return x
 
-rng = np.random.RandomState(1)
+    ## if SQRTSPLIT:
+    ##     npix = 2 * self.nrings**2
+    ##     x *= npix / 4 / np.pi
+    
+    ##     x, _, _ = self.solve_mask(x, *args, **kw)
 
-x0 = [
-    #scatter_l_to_lm(1. / system.dl_list[k]) *
-    rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
-    for k in range(system.comp_count)
-    ]
-b = system.matvec(x0)
-x0_stacked = system.stack(x0)
+
 
 from cmbcr.precond_psuedoinv import lstadd, lstsub, lstmul, lstscale
 
@@ -249,18 +240,18 @@ sinv_pick = sinv_solver.mask.reshape(2 * sinv_solver.nrings**2) == 0
 def restrict(x, lmax=None):
     self = sinv_solver
     lmax = lmax or self.lmax
-    x = x * scatter_l_to_lm(rl[:lmax + 1])
+    x = x * scatter_l_to_lm(rl)
     x = sharp.sh_synthesis_gauss(self.lmax, x, lmax_sh=lmax)
     x = x[sinv_pick]
     return x
 
 def prolong(x, lmax=None):
     self = sinv_solver
-    lmax = lmax or self.lmax
+    lmax = lmax or lmax_hi
     xpad = np.zeros((2 * self.nrings**2))
     xpad[sinv_pick] = x
     x = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad, lmax_sh=lmax)
-    x = x * scatter_l_to_lm(rl[:lmax + 1])
+    x = x * scatter_l_to_lm(rl)
     return x
 
 
@@ -283,10 +274,10 @@ def prolong_healpix(x):
 
 
 def ZAZ(x):
-    x = prolong(x, lmax=sinv_solver.lmax_sh)
+    x = prolong(x, lmax=lmax_hi)
     #x *= scatter_l_to_lm(system.dl_list[0])
-    x *= scatter_l_to_lm(dl_sinv)
-    x = restrict(x, lmax=sinv_solver.lmax_sh)
+    x *= scatter_l_to_lm(dl_ext)
+    x = restrict(x, lmax=lmax_hi)
     return x
 
 if 0:  # USE healpix dense system instead
@@ -299,16 +290,19 @@ else:
     
 
 
-if 1:
+if 'dense' in sys.argv:
     ZAZ_dense = hammer(ZAZ, N_MASK)
     ZAZ_dense += np.eye(ZAZ_dense.shape[0])# * 1e-3 * ZAZ_dense.max()
     ZAZ_inv = np.linalg.pinv(ZAZ_dense)
 
     def mask_dense_solver(x):
-        x = restrict(x)
+        x = x * lowpass_lm
+        x = restrict(x, lmax_hi)
         x = np.dot(ZAZ_inv, x)
-        return prolong(x)
-
+        x = prolong(x, lmax_hi)
+        x = x * lowpass_lm
+        return x
+    
     solve_mask = mask_dense_solver
 #1/0
 
@@ -326,25 +320,52 @@ def precond_both(b):
     elif 0:
         x = [solve_mask(b[0])]
         return x
-    elif 1:
-        x = precond_1.apply(b)
-        x = lstadd(x, [solve_mask(b[0])])
+    elif 0:
+        b_lo = pad_or_truncate_alm(b, system.lmax_list[0])
+        x_lo = precond_1.apply([b_lo])[0]
+        x = pad_or_truncate_alm(x_lo, lmax_hi)
+
+        #x += b * (1 - lowpass_lm) * scatter_l_to_lm(1 / dl_ext)
+        
+        x += solve_mask(b)
         return x
     elif 0:
         x = filtered_precond1(b)
         x = lstadd(x, [solve_mask(b[0])])
         return x
     else:
-        x = b
-        x = lstadd(x, lstscale(0.1, precond_1.apply(b)))
-        r = lstsub(b, system.matvec(x))
-        x = lstadd(x, [0.01 * solve_mask(r[0])])
+        x = precond_1.apply([b])[0]
 
-        r = lstsub(b, system.matvec(x))
-        x = lstadd(x, lstscale(0.1, precond_1.apply(b)))
-#        x = lstadd(x, precond_1.apply(r))
+        r = b - system.matvec([x])[0]
+        x += solve_mask(r)
+        
+        r = b - system.matvec([x])[0]
+        x += precond_1.apply([r])[0]
 
         return x
+
+
+
+def matvec(x):
+    x_lo = pad_or_truncate_alm(x, system.lmax_list[0])
+    Ni_x = system.matvec([x_lo], skip_prior=True)[0]
+
+    x = x * scatter_l_to_lm(dl_ext)
+    x += pad_or_truncate_alm(Ni_x, lmax_hi)
+    return x
+    
+
+
+lowpass_l = np.zeros(lmax_hi + 1)
+lowpass_l[:lmax + 1] = 1
+lowpass_lm = scatter_l_to_lm(lowpass_l)
+
+rng = np.random.RandomState(1)
+
+x0 = rng.normal(size=(lmax_hi + 1)**2).astype(np.float64)
+x0 *= lowpass_lm
+b = matvec(x0)
+x0_stacked = x0.copy()
 
 from cmbcr import norm_by_l    
 errlst = []
@@ -358,31 +379,32 @@ if 'err' in sys.argv:
     clf()
 
 solver = cg_generator(
-    lambda x: system.stack(system.matvec(system.unstack(x))),
-    system.stack(b),
+    lambda x: matvec(x),
+    b,
     #x0=start_vec,
-    M=lambda x: system.stack(precond_both(system.unstack(x))),
+    M=lambda x: precond_both(x),
     )
 
 for i, (x, r, delta_new) in enumerate(solver):
-    x = system.unstack(x)
+    #x = system.unstack(x)
 
-    errvec = lstsub(x0, x)
-    err_its.append(errvec)
-    x_its.append(x)
+    #errvec = lstsub(x0, x)
+    #err_its.append(errvec)
+    #x_its.append(x)
+    errvec = x0 - x
     
-    errlst.append(np.linalg.norm(system.stack(errvec)) / norm0)
+    errlst.append(np.linalg.norm(errvec) / norm0)
 
     if 'err' in sys.argv:
-        semilogy(norm_by_l(x[0] - x0[0]) / norm_by_l(x0[0]))
+        semilogy(norm_by_l(x - x0) / norm_by_l(x0))
 
     print 'it', i
-    if i > 20:
+    if i > 30:
         break
 
 def errmap():
     clf()
-    e = sharp.sh_synthesis(nside, x0[0]-x[0])
+    e = sharp.sh_synthesis(nside, x0-x)
     mollview(e, sub=111, max=e.max(), min=e.min(), xsize=2000)
     #mollview(e * mask_deg, sub=312, max=e.max(), min=e.min(), xsize=2000)
     #mollview(e * (1 - mask_deg), sub=313, max=e.max(), min=e.min(), xsize=2000)

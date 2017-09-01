@@ -24,11 +24,14 @@ def beam_by_cos_theta(bl, cos_thetas):
 
 
 
-def standard_needlet_by_l(B, lmax):
+def standard_needlet_by_l(B, lmax, minval=None):
     """
     Returns the spherical harmonic profile of a standard needlet on the sphere,
     following the recipe of arXiv:1004.5576. Instead of providing j, you provide
     lmax, and a j is computed so that the function reaches 0 at lmax.
+
+    If `minval` is provided, then lmax is gradually increased so as to avoid values
+    smaller than `minval` in the result.
     """
     from scipy.integrate import quad
     
@@ -63,9 +66,14 @@ def standard_needlet_by_l(B, lmax):
         else:
             return 0
 
-    j = (np.log(lmax) - np.log(B)) / np.log(B)
-    C = float(B)**j
-    return np.asarray([b(l / C, B) for l in range(lmax + 1)])
+    L = lmax
+    while True:
+        j = (np.log(L) - np.log(B)) / np.log(B)
+        C = float(B)**j
+        result = np.asarray([b(l / C, B) for l in range(lmax + 1)])
+        if minval is None or result[-1] >= minval:
+            return result
+        L += 1
 
 
 def fwhm_to_sigma(fwhm):
