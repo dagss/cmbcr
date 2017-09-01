@@ -23,6 +23,12 @@ def beam_by_cos_theta(bl, cos_thetas):
     return legendre_transform(cos_thetas, scaled_bl) / (4. * np.pi)
 
 
+def standard_needlet_restriction_by_l(B, lmax, minval=None):
+    ql = standard_needlet_by_l(B, lmax, minval)
+    i = ql.argmax()
+    ql[:i] = 1
+    return ql
+
 
 def standard_needlet_by_l(B, lmax, minval=None):
     """

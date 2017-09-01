@@ -372,24 +372,27 @@ class CrSystem(object):
                 rms[rms < alpha] = alpha
                 ninv_map = 1 / rms**2
 
+
+                # Include the mask only in mixing maps, not ninv-map..
+                
                 # We don't deal with the mask before precompute, because if the system is downscaled
                 # we want to
-                nside = nside_of(ninv_map)
+                ##nside = nside_of(ninv_map)
 
-                if mask is not None:
-                    # First, udgrade the mask to same resolution as ninv_map. Then, extend it with one beam-size.
-                    mask_ud = healpy.ud_grade(mask, nside, order_in='RING', order_out='RING', power=0)
-                    mask_ud[mask_ud != 0] = 1
+                ## if mask is not None and False:
+                ##     # First, udgrade the mask to same resolution as ninv_map. Then, extend it with one beam-size.
+                ##     mask_ud = healpy.ud_grade(mask, nside, order_in='RING', order_out='RING', power=0)
+                ##     mask_ud[mask_ud != 0] = 1
 
-                    #mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
-                    #from .beams import gaussian_beam_by_l
-                    #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '4 deg'))
-                    #mask_ext = sharp.sh_synthesis(nside, mask_lm)
+                ##     #mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
+                ##     #from .beams import gaussian_beam_by_l
+                ##     #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '4 deg'))
+                ##     #mask_ext = sharp.sh_synthesis(nside, mask_lm)
 
-                    #healpy.mollzoom(mask_ext - mask_ud)
-                    #1/0
+                ##     #healpy.mollzoom(mask_ext - mask_ud)
+                ##     #1/0
 
-                    ninv_map *= mask_ud
+                ##     ninv_map *= mask_ud
 
                 ninv_maps.append(ninv_map)
 

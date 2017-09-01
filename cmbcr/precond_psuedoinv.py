@@ -129,12 +129,17 @@ class PsuedoInversePreconditioner(object):
         self.plan = sharp.RealMmajorGaussPlan(system.lmax_ninv, lmax)
 
         def make_inv_map(x):
-            x = x.copy()
-            eps = x.max() * 1e-3
-            m = (x < eps)
-            x[m] = 0
-            x[~m] = 1. / x[~m]
-            return x
+
+            mask_ud = healpy.ud_grade(system.mask, nside_of(x), order_in='RING', order_out='RING', power=0)
+            mask_ud[mask_ud != 0] = 1
+
+            return mask_ud / x
+            ## x = x.copy()
+            ## eps = x.max() * 1e-3
+            ## m = (x < eps)
+            ## x[m] = 0
+            ## x[~m] = 1. / x[~m]
+            ## return x
 
         if self.system.use_healpix:
             self.inv_inv_maps = [make_inv_map(x) for x in system.ninv_maps]

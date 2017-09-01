@@ -7,6 +7,7 @@ from .beams import standard_needlet_by_l, fourth_order_beam, gaussian_beam_by_l
 from . import sharp
 from .cg import cg_generator
 from .utils import scatter_l_to_lm, hammer
+from .cache import memory
 
 
 def needletify_dl(b, lmax_factor, dl):
@@ -31,6 +32,33 @@ def operator_image_to_power_spectrum(unitvec, opimage):
     return dl_fft
 
 
+def sphere_dl_to_2d_fft_spectrum(dl, ntheta, nphi):
+    """
+    Convert the operator Y D1 Y^T to F D2 F^T, where Y are spherical harmonics,
+    D1 has `dl` on the diagonal, and D2. The result will be on the resolution given by ntheta, nphi.
+    """
+    nrings = dl.shape[0]
+
+    unitvec_hi = np.zeros((nrings, 2 * nrings))
+    unitvec_hi[nrings // 2, nrings] = 1
+
+    # Make a [2*pi, pi] image of the operator on the equator using spherical harmonics, at the full resolution
+    # supporting lmax
+    u = sharp.sh_adjoint_synthesis_gauss(nrings - 1, unitvec_hi.reshape(2 * nrings**2))
+    u *= scatter_l_to_lm(dl)
+    opimage_hi = sharp.sh_synthesis_gauss(nrings - 1, u).reshape((nrings, 2 * nrings))
+
+    # Slice out a piece that is large enough to only support (ntheta, nphi)
+    opimage_lo = opimage_hi[(nrings - ntheta) // 2:(nrings + ntheta) // 2, (2 * nrings - nphi) // 2:(2 * nrings + nphi) // 2]
+    unitvec_lo = unitvec_hi[(nrings - ntheta) // 2:(nrings + ntheta) // 2, (2 * nrings - nphi) // 2:(2 * nrings + nphi) // 2]
+
+    # Turn it into Fourier power spectrum
+    result = operator_image_to_power_spectrum(unitvec_lo, opimage_lo)
+    assert result.shape == (ntheta, nphi)
+    return result
+
+
+
 def flatsky_analysis(u):
     return np.fft.fftn(u) / np.prod(u.shape)
 
@@ -47,6 +75,7 @@ def flatsky_adjoint_synthesis(u):
     return np.fft.fftn(u)
 
 
+@memory.cache
 def coarsen_matrix(ntheta, nphi):
     coarse_ntheta = ntheta // 2
     coarse_nphi = nphi // 2
@@ -83,46 +112,19 @@ def coarsen_matrix(ntheta, nphi):
 
 class SinvSolver(object):
 
-    def __init__(self, dl, mask_gauss, b=None, lmax_factor=None, ridge=0, split=False, rl=None, nrings=None):
-        if nrings is None:
-            nrings = dl.shape[0]
-        self.nrings = nrings
-        self.lmax = nrings - 1
-        self.ridge = ridge
+    def __init__(self, dl, mask_gauss, split=False):
+        self.nrings = int(np.round(np.sqrt(mask_gauss.shape[0] / 2)))
+        assert mask_gauss.shape[0] == 2 * self.nrings**2
+        self.lmax = self.nrings - 1
 
-        self.start_ring = 0#self.nrings // 4
-        self.stop_ring = self.nrings#3 * self.nrings // 4
-
-        if rl is not None:
-            self.extended_dl = dl * rl**2
-            self.rl = rl
-        else:
-            if b is not None:
-                self.extended_dl = needletify_dl(b, lmax_factor, dl)
-            else:
-                self.extended_dl = dl
-            self.rl = np.ones(self.extended_dl.shape[0])
-        
-        self.lmax_sh = self.extended_dl.shape[0] - 1
+        self.start_ring = 3 * self.nrings // 8
+        self.stop_ring = 5 * self.nrings // 8
 
         self.dl = dl
-
-        ## # Sample the mask to the FFT grid we want it on
-        ## mask_lm = sharp.sh_analysis(self.nrings - 1, mask_healpix)
-        ## #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(self.nrings - 1, '5 deg'))
-        ## mask_gauss = sharp.sh_synthesis_gauss(self.nrings - 1, mask_lm)
-        ## mask_gauss[mask_gauss < 0] = 0
-        ## mask_gauss[mask_gauss >= 1] = 1
-
-        ## mask_gauss[mask_gauss < 0.8] = 0
-        ## mask_gauss[mask_gauss >= 0.8] = 1
         
-        #from matplotlib.pyplot import clf, imshow, draw
-        #clf()
-        #imshow(mask_gauss.reshape(self.nrings, self.nrings * 2))
-        #draw()
-        #1/0
-        
+        self.lmax_sh = self.dl.shape[0] - 1
+
+        self.dl = dl
         self.mask = self.gauss_grid_to_equator(mask_gauss)
 
         # Transfer the S^{-1} operator from spherical harmonics to Fourier
@@ -130,25 +132,7 @@ class SinvSolver(object):
         nphi = 2 * self.nrings
         self.shape = (ntheta, nphi)
 
-        nrings_hi = self.extended_dl.shape[0]
-        nrings_lo = self.nrings
-        
-        unitvec_hi = np.zeros((nrings_hi, 2 * nrings_hi))
-        unitvec_hi[nrings_hi // 2, nrings_hi] = 1
-
-        u = sharp.sh_adjoint_synthesis_gauss(nrings_hi - 1, unitvec_hi.reshape(2 * nrings_hi**2))
-        u *= scatter_l_to_lm(self.extended_dl)
-        opimage_hi = sharp.sh_synthesis_gauss(nrings_hi - 1, u)
-        
-        opimage_hi = opimage_hi.reshape((nrings_hi, 2 * nrings_hi))
-        opimage_lo = opimage_hi[(nrings_hi - nrings_lo) // 2:(nrings_hi + nrings_lo) // 2, nrings_hi - nrings_lo:nrings_hi + nrings_lo]
-        unitvec_lo = unitvec_hi[(nrings_hi - nrings_lo) // 2:(nrings_hi + nrings_lo) // 2, nrings_hi - nrings_lo:nrings_hi + nrings_lo]
-
-        self.outer_dl_fft = operator_image_to_power_spectrum(unitvec_lo, opimage_lo)
-
-        #print self.shape
-        #print self.outer_dl_fft.shape
-        assert self.outer_dl_fft.shape == self.shape
+        self.outer_dl_fft = sphere_dl_to_2d_fft_spectrum(self.dl, ntheta, nphi)
         
         #self.outer_dl_fft *= img[0,0] / self.outer_dl_fft[0,0]
 
@@ -159,7 +143,7 @@ class SinvSolver(object):
             self.inner_dl_fft = self.outer_dl_fft
             
         # Build multi-grid levels
-        cur_level = Level(self.inner_dl_fft, self.mask, 0)
+        cur_level = Level(self.inner_dl_fft, self.mask)
         self.levels = [cur_level]
 
         while cur_level.n > 50:
@@ -171,14 +155,6 @@ class SinvSolver(object):
 
 
         self.n = int((self.mask == 0).sum())
-        u = np.zeros(self.n)
-        u[self.n // 2] = 1
-        self.ridge_value = 0  # set for benefit of outer_matvec below
-        self.ridge_value = ridge * self.outer_matvec(u)[self.n // 2]
-
-        for level, smoother in zip(self.levels, self.smoothers):
-            level.ridge_value = self.ridge_value
-            smoother.inv_diag = 1 / level.compute_diagonal()
         
 
     def restrict(self, u, lmax=None):
@@ -202,7 +178,7 @@ class SinvSolver(object):
         u *= self.outer_dl_fft
         u = flatsky_synthesis(u)
         u = root_level.pickvec(u).real
-        return u + self.ridge_value * u_in
+        return u
 
     def outer_precond(self, b):
         x = self.inner_precond(b)
@@ -247,10 +223,10 @@ class SinvSolver(object):
             if x0 is not None:
                 e = np.linalg.norm(x0 - x) / x0_norm
                 errlst.append(e)
-                #print 'iteration {}, res={}, err={}'.format(i, r, e)
+                print 'iteration {}, res={}, err={}'.format(i, r, e)
             else:
                 pass
-                #print 'iteration {}, res={}'.format(i, r)
+                print 'iteration {}, res={}'.format(i, r)
             if r < rtol or i > maxit:
                 print 'breaking', r, repr(rtol), i, maxit
                 break
@@ -259,7 +235,6 @@ class SinvSolver(object):
 
     def solve_alm(self, b, single_v_cycle=False, repeat=1, *args, **kw):
         1/0
-        b = b * scatter_l_to_lm(self.rl)
         x = self.pickvec(self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.nrings - 1, b, lmax_sh=self.lmax_sh)))
         for i in range(repeat):
             if single_v_cycle:
@@ -267,13 +242,12 @@ class SinvSolver(object):
             else:
                 x, reslst, errlst = self.solve_mask(x, *args, **kw)
         x = sharp.sh_adjoint_synthesis_gauss(self.nrings - 1, self.equator_to_gauss_grid(self.padvec(x)), lmax_sh=self.lmax_sh)
-        x *= scatter_l_to_lm(self.rl)
         return x
     
     
 
 class Level(object):
-    def __init__(self, dl_fft, mask, ridge_value):
+    def __init__(self, dl_fft, mask):
         self.mask = mask
         self.dl_fft = dl_fft
         self.ntheta, self.nphi = dl_fft.shape
@@ -282,14 +256,13 @@ class Level(object):
         self.R = coarsen_matrix(self.ntheta, self.nphi)
         self.ntheta_H = self.ntheta // 2
         self.nphi_H = self.nphi // 2
-        self.ridge_value = ridge_value
 
     def compute_diagonal(self):
         # sample the operator to figure out the constant to use...
         u = np.zeros((self.ntheta, self.nphi))
         u[self.ntheta // 2, 0] = 1
         u = self.matvec_padded(u)
-        return u[self.ntheta // 2, 0] + self.ridge_value
+        return u[self.ntheta // 2, 0]
         
     def pickvec(self, u):
         return u.reshape(self.ntheta * self.nphi)[self.pick]
@@ -309,7 +282,6 @@ class Level(object):
         u = self.padvec(u_in)
         u = self.matvec_padded(u)
         u = self.pickvec(u)
-        u += self.ridge_value * u_in
         return u
 
     def matvec_coarsened(self, u):
@@ -340,7 +312,7 @@ class DiagonalSmoother(object):
         self.inv_diag = 1 / self.diag
 
     def apply(self, u):
-        return 0.4 * self.inv_diag * u
+        return 0.3 * self.inv_diag * u
 
 
 def v_cycle(ilevel, levels, smoothers, b):
@@ -388,4 +360,4 @@ def coarsen_level(level):
     unitvec[ntheta_H // 2, nphi_H // 2] = 1
     image_of_operator = level.matvec_coarsened(unitvec)
     dl_fft_H = operator_image_to_power_spectrum(unitvec, image_of_operator)
-    return Level(dl_fft_H, mask_H, ridge_value=level.ridge_value)
+    return Level(dl_fft_H, mask_H)
