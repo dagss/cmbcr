@@ -92,19 +92,26 @@ if 0:
 else:
 
     lmax_hi = int(1 * system.lmax_list[0])
-    dl = system.dl_list[0]
-    #l = np.arange(1, lmax_hi + 2).astype(float)
+
+    l = np.arange(1, lmax_hi + 2).astype(float)
     
-    ql = cmbcr.standard_needlet_by_l(1.65, lmax_hi, 0.05)
+    #ql = np.sqrt(cmbcr.standard_needlet_by_l(1.65, lmax_hi, 0.05))
+    ql = np.sqrt(cmbcr.standard_needlet_by_l(3, lmax_hi))
     i = ql.argmax()
     ql[:i] = 1
     
-    #dl_new = l**6
-    #dl_new *= dl[0] / dl_new[0]
+    dl = l**6
+    dl *= system.dl_list[0][0] / dl[0]
 
-    
-    dl_ext = dl * ql
+    dl_ext = dl
     rl = np.ones(dl_ext.shape[0])
+
+
+    l = np.arange(1, 2 * lmax_hi + 2).astype(float)
+    dl = l**6
+    dl *= system.dl_list[0][0] / dl[0]
+    
+    dl_sinv = dl# * rl**2
     
 
 
@@ -117,7 +124,6 @@ if 'plot' in sys.argv:
 SQRTSPLIT = False
 
 
-dl_sinv = dl_ext
 if SQRTSPLIT:
     dl_sinv = np.sqrt(dl_sinv)
 
@@ -143,9 +149,9 @@ def solve_mask(b):
         xpad = np.zeros((2 * self.nrings**2))
         xpad[sinv_pick] = x
 
-        alm = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad)
-        alm *= scatter_l_to_lm(dl_sinv)
-        xpad = alm = sharp.sh_synthesis_gauss(self.lmax, alm)
+        alm = sharp.sh_adjoint_synthesis_gauss(self.lmax, xpad, lmax_sh=lmax_hi)
+        alm *= scatter_l_to_lm(dl_ext * rl**2)
+        xpad = alm = sharp.sh_synthesis_gauss(self.lmax, alm, lmax_sh=lmax_hi)
         return xpad[sinv_pick]
     
 
@@ -276,7 +282,7 @@ def prolong_healpix(x):
 def ZAZ(x):
     x = prolong(x, lmax=lmax_hi)
     #x *= scatter_l_to_lm(system.dl_list[0])
-    x *= scatter_l_to_lm(dl_ext)
+    x *= scatter_l_to_lm(dl_ext * rl**2)
     x = restrict(x, lmax=lmax_hi)
     return x
 
@@ -334,13 +340,15 @@ def precond_both(b):
         x = lstadd(x, [solve_mask(b[0])])
         return x
     else:
-        x = precond_1.apply([b])[0]
+        lmax_lo = system.lmax_list[0]
+        b_lo = pad_or_truncate_alm(b, lmax_lo)
+        x = pad_or_truncate_alm(precond_1.apply([b_lo])[0], lmax_hi)
 
-        r = b - system.matvec([x])[0]
+        r = b - pad_or_truncate_alm(system.matvec([pad_or_truncate_alm(x, lmax_lo)])[0], lmax_hi)
         x += solve_mask(r)
         
-        r = b - system.matvec([x])[0]
-        x += precond_1.apply([r])[0]
+        r = b - pad_or_truncate_alm(system.matvec([pad_or_truncate_alm(x, lmax_lo)])[0], lmax_hi)
+        x += pad_or_truncate_alm(precond_1.apply([pad_or_truncate_alm(x, lmax_lo)])[0], lmax_hi)
 
         return x
 

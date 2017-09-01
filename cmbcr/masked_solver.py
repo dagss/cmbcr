@@ -130,32 +130,28 @@ class SinvSolver(object):
         nphi = 2 * self.nrings
         self.shape = (ntheta, nphi)
 
-        nrings_dl = dl.shape[0]
+        nrings_hi = self.extended_dl.shape[0]
+        nrings_lo = self.nrings
         
-        unitvec_hi = np.zeros((nrings_dl, 2 * nrings_dl))
-        unitvec_hi[nrings_dl // 2, nrings_dl] = 1
+        unitvec_hi = np.zeros((nrings_hi, 2 * nrings_hi))
+        unitvec_hi[nrings_hi // 2, nrings_hi] = 1
 
-
-        
-        u = sharp.sh_adjoint_synthesis_gauss(self.nrings - 1, self.equator_to_gauss_grid(unitvec), lmax_sh=self.lmax_sh)
+        u = sharp.sh_adjoint_synthesis_gauss(nrings_hi - 1, unitvec_hi.reshape(2 * nrings_hi**2))
         u *= scatter_l_to_lm(self.extended_dl)
-        opimage = self.gauss_grid_to_equator(sharp.sh_synthesis_gauss(self.lmax, u, lmax_sh=self.lmax_sh))
+        opimage_hi = sharp.sh_synthesis_gauss(nrings_hi - 1, u)
+        
+        opimage_hi = opimage_hi.reshape((nrings_hi, 2 * nrings_hi))
+        opimage_lo = opimage_hi[(nrings_hi - nrings_lo) // 2:(nrings_hi + nrings_lo) // 2, nrings_hi - nrings_lo:nrings_hi + nrings_lo]
+        unitvec_lo = unitvec_hi[(nrings_hi - nrings_lo) // 2:(nrings_hi + nrings_lo) // 2, nrings_hi - nrings_lo:nrings_hi + nrings_lo]
 
-        #self.outer_dl_fft = cl_to_flatsky(self.extended_dl, self.shape[0], self.shape[1], self.lmax)
-        self.outer_dl_fft = operator_image_to_power_spectrum(unitvec, opimage)
+        self.outer_dl_fft = operator_image_to_power_spectrum(unitvec_lo, opimage_lo)
+
+        #print self.shape
+        #print self.outer_dl_fft.shape
+        assert self.outer_dl_fft.shape == self.shape
+        
         #self.outer_dl_fft *= img[0,0] / self.outer_dl_fft[0,0]
 
-        ni, nj = self.outer_dl_fft.shape
-        omega = self.ridge * self.outer_dl_fft.max()
-        for i in range(ni // 2):
-            for j in range(nj // 2):
-                if np.sqrt(i**2 + j**2) > np.sqrt((ni//4)**2 + (nj//4)**2):
-                    self.outer_dl_fft[i, j] += omega
-                    self.outer_dl_fft[-i, -j] += omega
-                    self.outer_dl_fft[-i, j] += omega
-                    self.outer_dl_fft[i, -j] += omega
-
-        
         self.split = split
         if self.split:
             self.inner_dl_fft = np.sqrt(self.outer_dl_fft)
@@ -177,12 +173,12 @@ class SinvSolver(object):
         self.n = int((self.mask == 0).sum())
         u = np.zeros(self.n)
         u[self.n // 2] = 1
-        self.ridge_value = 0
-        self.ridge_value = 0 #ridge * self.outer_matvec(u)[self.n // 2]
+        self.ridge_value = 0  # set for benefit of outer_matvec below
+        self.ridge_value = ridge * self.outer_matvec(u)[self.n // 2]
 
-        ## for level, smoother in zip(self.levels, self.smoothers):
-        ##     level.ridge_value = self.ridge_value
-        ##     smoother.inv_diag = 1 / level.compute_diagonal()
+        for level, smoother in zip(self.levels, self.smoothers):
+            level.ridge_value = self.ridge_value
+            smoother.inv_diag = 1 / level.compute_diagonal()
         
 
     def restrict(self, u, lmax=None):

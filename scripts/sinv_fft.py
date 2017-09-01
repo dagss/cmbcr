@@ -78,15 +78,15 @@ def make_dl_approx(lmax):
 
     return np.concatenate([l_to_3[:lpivot], l_to_6[lpivot:]])
 
-lmax_hi = int(1 * lmax)
+lmax_hi = int(2 * lmax)
 l = np.arange(1, lmax_hi + 2).astype(float)
-dl = l**4
+dl = l**1.5
 
-ql = cmbcr.standard_needlet_by_l(1.6, lmax_hi, 0.1)
-#ql = cmbcr.standard_needlet_by_l(1.5, lmax_hi, 0.05)
-i = ql.argmax()
-ql[:i] = 1
-dl = dl
+#ql = cmbcr.standard_needlet_by_l(1.6, lmax_hi, 0.1)
+ql = cmbcr.standard_needlet_by_l(1.5, lmax_hi, 0.05)
+#i = ql.argmax()
+#ql[:i] = 1
+#dl = dl
 dl *= ql
 
 
