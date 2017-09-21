@@ -46,10 +46,10 @@ def compute_banded_preconditioner(self, couplings, diagonal, factor):
                 #mixing_scalars=system.mixing_scalars[nu, :].copy(),
                 out=precond_data)
         # Only add dl in first iteration
-        #dl *= 0
+        dl *= 0
 
     # prior
-    precond_data[0, :] += 1
+    ##precond_data[0, :] += 1
             
     if diagonal:
         precond_data[1:, :] = 0

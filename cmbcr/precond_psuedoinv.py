@@ -6,17 +6,8 @@ from .mblocks import gauss_ring_map_to_phase_map
 from . import sharp, beams
 from cmbcr.healpix import nside_of
 from .precond_psuedoinv_mod import compsep_apply_U_block_diagonal, compsep_assemble_U
-
-def compute_Yh_D_Y_diagonal(lmax, phase_map, thetas):
-    from commander.sphere import legendre
-    from commander.compute.cr.mblocks import compute_real_Yh_D_Y_block
-    result = np.zeros((lmax + 1)**2)
-    idx = 0
-    for m in range(lmax + 1):
-        block = compute_real_Yh_D_Y_block(m, m, lmax, lmax, thetas, phase_map)
-        result[idx:idx + block.shape[0]] = block.diagonal()
-        idx += block.shape[0]
-    return result
+from .beams import fourth_order_beam
+from .block_matrix import block_diagonal_factor, block_diagonal_solve
 
 
 def pinv_block_diagonal(blocks):
@@ -93,11 +84,17 @@ def lstsub(a, b):
     return [ax - bx for ax, bx in zip(a, b)]
 
 
+
 class PsuedoInversePreconditioner(object):
+
     def __init__(self, system):
         self.system = system
 
         lmax = max(system.lmax_list)
+
+        lmax = max(system.lmax_list)
+        self.lmax = lmax
+        self.plan = sharp.RealMmajorGaussPlan(system.lmax_ninv, lmax)
 
         self.alpha_lst = []
         for nu in range(system.band_count):
@@ -110,289 +107,144 @@ class PsuedoInversePreconditioner(object):
             ##q = ninv_gauss_no_w[ninv_gauss_no_w > ninv_gauss_no_w.max() * 7e-4]
             alpha = np.sqrt((ninv_gauss_no_w**2).sum() / ninv_gauss_no_w.sum())
             self.alpha_lst.append(1 * alpha)
-            
+
         self.U = create_mixing_matrix(system, lmax, self.alpha_lst)
         self.Uplus = pinv_block_diagonal(self.U)
 
-        #self.Uplus = np.zeros(
-        #    (self.system.comp_count + self.system.band_count, self.system.comp_count, lmax + 1),
-        #    dtype=np.float32, order='F')
-
-
-        #for l in range(lmax + 1):
-        #    self.Uplus[:, :, l] = self.Pi[:, :, l].T
-        #del self.Pi
-        #del self.P
-
-        lmax = max(system.lmax_list)
-        self.lmax = lmax
-        self.plan = sharp.RealMmajorGaussPlan(system.lmax_ninv, lmax)
-
         def make_inv_map(x):
-
-            mask_ud = healpy.ud_grade(system.mask, nside_of(x), order_in='RING', order_out='RING', power=0)
-            mask_ud[mask_ud != 0] = 1
-
-            return mask_ud / x
-            ## x = x.copy()
-            ## eps = x.max() * 1e-3
-            ## m = (x < eps)
-            ## x[m] = 0
-            ## x[~m] = 1. / x[~m]
-            ## return x
+            return 1 / x
 
         if self.system.use_healpix:
             self.inv_inv_maps = [make_inv_map(x) for x in system.ninv_maps]
         else:
             self.inv_inv_maps = [make_inv_map(x) for x in system.ninv_gauss_lst]
 
-
     def apply(self, x_lst):
         #x_lst = lstscale(1/10., x_lst)
         x_lst = apply_block_diagonal_pinv_transpose(self.system, self.Uplus, x_lst)
-        c_h = []
-        for nu in range(self.system.band_count):
-            u = x_lst[nu]
-            u *= self.alpha_lst[nu]
-            if self.system.use_healpix:
-                n_map = self.inv_inv_maps[nu]
-                u = sharp.sh_adjoint_analysis(nside_of(n_map), u)
-                u *= n_map
-                u = sharp.sh_analysis(self.lmax, u)
-            else:
-                u = self.plan.adjoint_analysis(u)
-                u *= self.inv_inv_maps[nu]
-                u = self.plan.analysis(u)
-            u *= self.alpha_lst[nu]
-            c_h.append(u)
-        for k in range(self.system.comp_count):
-            c_h.append(x_lst[self.system.band_count + k])
+        c_h = (
+            [self.inverse_noise_map(nu, x_lst[nu]) for nu in range(self.system.band_count)]
+            + x_lst[self.system.band_count:]
+            )
         x_lst = apply_block_diagonal_pinv(self.system, self.Uplus, c_h)
-        #x_lst = lstscale(1/10., x_lst)
         return x_lst
+            
+    def inverse_noise_map(self, nu, u):
+        u *= self.alpha_lst[nu]
+        if self.system.use_healpix:
+            n_map = self.inv_inv_maps[nu]
+            u = sharp.sh_adjoint_analysis(nside_of(n_map), u)
+            u *= n_map
+            u = sharp.sh_analysis(self.lmax, u)
+        else:
+            u = self.plan.adjoint_analysis(u)
+            u *= self.inv_inv_maps[nu]
+            u = self.plan.analysis(u)
+        u *= self.alpha_lst[nu]
+        return u
 
+    
+class DiagonalPreconditioner2(object):
+    def __init__(self, system):
+        from .precond_diag import compute_Yh_D_Y_diagonal
+        from .mblocks import gauss_ring_map_to_phase_map
+
+        self.system = system
+
+        lmax = max(self.system.lmax_list)
+
+        U = create_mixing_matrix(system, lmax, [1.] * system.band_count)
+        
+        Ni_diag_lst = []
+        for nu in range(self.system.band_count):
+            print 'compute_Yh_D_Y_diagonal for ', nu
+            ninv_phase, thetas = gauss_ring_map_to_phase_map(system.ninv_gauss_lst[nu], system.lmax_ninv, lmax)
+            Ni_diag_lst.append(compute_Yh_D_Y_diagonal(lmax, ninv_phase, thetas))
+
+        blocks = np.zeros((self.system.comp_count, self.system.comp_count, (lmax + 1)**2), order='F')
+        idx = 0
+        for m in range(lmax + 1):
+            print 'Precond construction, m=', m
+            for l in range(m, lmax + 1):
+                for neg in range(2):
+                    if m == 0 and neg == 1:
+                        continue
+
+                    U_block = U[:, :, l].copy()
+                    for nu in range(self.system.band_count):
+                        U_block[nu, :] *= np.sqrt(Ni_diag_lst[nu][idx])
+
+                    blocks[:, :, idx] = np.dot(U_block.T, U_block)
+                    for k in range(self.system.comp_count):
+                        # if l is larger than lmax_list[k], then the corresponding rows/columns
+                        # in U_block will be zero. In this case just insert 1 so that the system can
+                        # be inverted. The resulting coefficients in the inverted blocks will not be
+                        # used anyway (due to padding/truncation)
+                        if blocks[k, k, idx] == 0:
+                            blocks[k, k, idx] = 1
+                    idx += 1
+        assert idx == (lmax + 1)**2
+        block_diagonal_factor(blocks)
+        self.blocks = blocks
+        self.lmax = lmax
+
+        
+
+    def apply(self, x_lst):
+        comp_count = self.system.comp_count
+
+        buf = np.empty((comp_count, (self.lmax + 1)**2), order='F')
+        for k in range(comp_count):
+            buf[k, :] = pad_or_truncate_alm(x_lst[k], self.lmax)
+
+        block_diagonal_solve(self.blocks, buf)
+        
+        result = [None] * comp_count
+        for k in range(comp_count):
+            result[k] = pad_or_truncate_alm(buf[k, :], self.system.lmax_list[k])
+
+        return result
+        
+        
+        
+    
 
 class PsuedoInverseWithMaskPreconditioner(object):
-    def __init__(self, system, method='add'):
+    def __init__(self, system, flatsky=False):
+        if flatsky:
+            from .masked_solver_fft import SinvSolver
+            mask = system.mask_gauss_grid
+        else:
+            from .masked_solver import SinvSolver
+            mask = system.mask_dg
+
         self.psuedo_inv = PsuedoInversePreconditioner(system)
         self.system = system
-        self.method = method
+
+        self.rl_list = [
+            fourth_order_beam(system.lmax_list[k], system.lmax_list[k] // 2, 0.1)
+            for k in range(system.comp_count)
+        ]
 
         if self.system.mask is not None:
-            # Make appropriate masks for each component
-            self.filter_lst = []
-            for k in range(self.system.comp_count):
-                lmax = self.system.lmax_list[k]
-                # round up to nearest power of 2, then divide by 2, to get nside
-                nside = 1
-                while nside < lmax:
-                    nside *= 2
-                #nside //= 2
-                from healpy import mollzoom
-                mask_ud = healpy.ud_grade(system.mask, nside, order_in='RING', order_out='RING', power=0)
-                # Tested out a few options here, but seems like having a mask with 0.5, 0.25, etc on the border
-                # was the best choice
-                self.filter_lst.append(1 - mask_ud)
+            self.sinv_solvers = [
+                SinvSolver(system.dl_list[k] * self.rl_list[k]**2, mask)
+                for k in range(self.system.comp_count)
+                ]
 
-    def filter_vec(self, k, x, neg=False):
-        # Applies a mask filter for component k to vector x
-        f = self.filter_lst[k]
-        if neg:
-            f = 1 - f
-        return sharp.sh_analysis(self.system.lmax_list[k], sharp.sh_synthesis(nside_of(f), x) * f)
-
-    def filter(self, x_lst, neg=False):
-        return [self.filter_vec(k, x_lst[k], neg) for k in range(self.system.comp_count)]
-    
-    def solve_under_mask(self, r_h_lst):
-        1/0
-        c_h_lst = []
-        for k in range(self.system.comp_count):
-            r_H = r_h_lst[k]
-
-            # solve
-            r_H *= (1. / scatter_l_to_lm(self.system.dl_list[k]))
-
-            # prolong
-            c_h = r_H
-            c_h_lst.append(c_h)
-        return c_h_lst
-
-    def M1(self, u_lst):
-        return self.psuedo_inv.apply(u_lst)
-        return self.filter(self.psuedo_inv.apply(self.filter(u_lst, neg=True)), neg=True)
-
-    def M2(self, u_lst):
-        return self.solve_under_mask(u_lst)
-
-    def apply_Q(self, u_lst):
-        return self.M1(u_lst)
-        #return self.M2(u_lst)
-
-    def apply_Minv(self, u_lst):
-        return self.M2(u_lst)
-        #return self.M1(u_lst)
-
-    #def v_end(self, b_lst, x_lst):
-    #    return lstadd(self.apply_Q(b_lst), self.apply_Pt(x_lst))
-
-    def apply_Pt(self, x_lst):
-        return lstsub(x_lst, self.apply_Q(self.system.matvec(x_lst)))
-
-    def apply_P(self, x_lst):
-        return lstsub(x_lst, self.system.matvec(self.apply_Q(x_lst)))
-
-    
-    #def starting_vector(self, b_lst):
-    #    #return [0 * u for u in b_lst]
-        #return self.apply_Q(b_lst)
-
-    #def apply_CG_M2(self, b_lst):
-    #    return self.apply_Pt(b_lst)
+    def solve_component_under_mask(self, k, x):
+        sinv_solver = self.sinv_solvers[k]
+        x_pix = sinv_solver.restrict(x * scatter_l_to_lm(self.rl_list[k]))
+        x_pix, _, _ = sinv_solver.solve_mask(x_pix, rtol=1e-2, maxit=5)
+        x = sinv_solver.prolong(x_pix) * scatter_l_to_lm(self.rl_list[k])
+        return x
 
     def apply(self, b_lst):
-        if self.system.mask is None:
-            return self.psuedo_inv.apply(b_lst)
-        else:
-            m = getattr(self, 'apply_{}'.format(self.method))
-            return m(b_lst)
-
-    def apply_add1(self, b_lst):
-        return lstadd(
-            self.psuedo_inv.apply(b_lst),
-            lstscale(1,
-                self.filter(self.solve_under_mask(self.filter(b_lst)))
-                         ))
-
-    def apply_add2(self, b_lst):
-        return lstadd(
-            self.filter(self.psuedo_inv.apply(self.filter(b_lst, neg=True)), neg=True),
-            self.filter(self.solve_under_mask(self.filter(b_lst))))
-
-    def apply_add3(self, b_lst):
-        # diverges
-        return lstadd(
-            self.psuedo_inv.apply(b_lst),
-            self.solve_under_mask(b_lst))
-    
-    def apply_add4(self, b_lst):
-        # diverges
-        return lstadd(
-            self.filter(self.psuedo_inv.apply(self.filter(b_lst, neg=True)), neg=True),
-            self.solve_under_mask(b_lst))
-    
-    def apply_v1(self, b_lst):
-
-        def A_approx(u_lst):
-            #u_lst = self.filter(u_lst, neg=True)
-            u_lst = self.system.matvec(u_lst)
-            #u_lst = self.filter(u_lst, neg=True)
-            return u_lst
-
-        # x = M_outer b
-        x_lst = self.filter(self.psuedo_inv.apply(self.filter(b_lst, neg=True)), neg=True)
-
-        # x = x + M_inner (b - A x)
-        r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst, neg=False)), neg=False)
-        x_lst = lstadd(x_lst, c_lst)
-        # x = x + M_outer (b - A x)
-        r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.filter(self.psuedo_inv.apply(self.filter(r_lst, neg=True)), neg=True)
-        x_lst = lstadd(x_lst, c_lst)
-        return x_lst
-        
-    def apply_v2(self, b_lst):
-
-        def A_approx(u_lst):
-            #u_lst = self.filter(u_lst, neg=True)
-            u_lst = self.system.matvec(u_lst)
-            #u_lst = self.filter(u_lst, neg=True)
-            return u_lst
-
-        # x = M_outer b
-        x_lst = self.psuedo_inv.apply(b_lst)
-
-        # x = x + M_inner (b - A x)
-        r_lst = lstsub(b_lst, A_approx(x_lst))
-        #c_lst = self.solve_under_mask(r_lst)
-        c_lst = self.filter(self.solve_under_mask(self.filter(r_lst, neg=False)), neg=False)
-        x_lst = lstadd(x_lst, c_lst)
-        # x = x + M_outer (b - A x)
-        r_lst = lstsub(b_lst, A_approx(x_lst))
-        c_lst = self.psuedo_inv.apply(r_lst)
-        x_lst = lstadd(x_lst, c_lst)
-        return x_lst
-
-    def apply_bnn(self, b_lst):
-        return lstadd(
-            self.apply_Pt(self.apply_Minv(self.apply_P(b_lst))),
-            self.apply_Q(b_lst))
-    
-
-        
-
-class SwitchPreconditioner(object):
-    def __init__(self, first, second, n):
-        self.first = first
-        self.second = second
-        self.n = n
-        self.i = 0
-
-    def apply(self, x):
-        if self.i <= self.n:
-            r = self.first.apply(x)
-        else:
-            r = self.second.apply(x)
-        self.i += 1
-        return r
-            
-
-class MGPreconditioner(object):
-    def __init__(self, system):
-        from .cr_system import restrict_system
-        self.system_h = system
-        self.system_H = restrict_system(system)
-
-        self.precond_h = PsuedoInverseWithMaskPreconditioner(self.system_h, 'add1')
-        self.precond_H = PsuedoInverseWithMaskPreconditioner(self.system_H, 'add1')
-
-    def apply(self, b_lst):
-        
-        def restrict(u_lst):
-            v_lst = []
-            for k in range(self.system_h.comp_count):
-                u = pad_or_truncate_alm(u_lst[k], self.system_H.lmax_list[k])
-                u *= scatter_l_to_lm(self.system_H.rl_list[k])
-                v_lst.append(u)
-            return v_lst
-
-        def prolong(u_lst):
-            v_lst = []
-            for k in range(self.system_h.comp_count):
-                u = u_lst[k] * scatter_l_to_lm(self.system_H.rl_list[k])
-                u = pad_or_truncate_alm(u, self.system_h.lmax_list[k])
-                v_lst.append(u)
-            return v_lst
-
-        x_lst = lstscale(0, b_lst)
-
-        for i in range(10):
-            r_h_lst = lstsub(b_lst, self.system_h.matvec(x_lst))
-            c_h_lst = self.precond_h.apply(r_h_lst)
-            x_lst = lstadd(x_lst, lstscale(0.01, c_h_lst))
-        
-        #x_lst = self.precond_h.apply(b_lst)
-        #r_h_lst = lstsub(b_lst, self.system_h.matvec(x_lst))
-        #r_H_lst = restrict(r_h_lst)
-        #c_H_lst = self.precond_H.apply(r_H_lst)
-        #c_h_lst = prolong(c_H_lst)
-        #x_lst = lstadd(x_lst, lstscale(0.01, c_h_lst))
-
-        for i in range(10):
-            r_h_lst = lstsub(b_lst, self.system_h.matvec(x_lst))
-            c_h_lst = self.precond_h.apply(r_h_lst)
-            x_lst = lstadd(x_lst, lstscale(0.01, c_h_lst))
-        
-        return x_lst
-        
+        x = self.psuedo_inv.apply(b_lst)
+        if self.system.mask is not None:
+            x_under_mask = [
+                self.solve_component_under_mask(k, b_lst[k])
+                for k in range(self.system.comp_count)
+            ]
+            x = lstadd(x, x_under_mask)
+        return x

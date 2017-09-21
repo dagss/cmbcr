@@ -83,8 +83,12 @@ class HarmonicPrior(object):
         elif t == 'gaussian':
             ls = np.arange(self.lmax + 1)
             sigma = fwhm_to_sigma(self.spec['fwhm'])
+            sigma *= (self.fullres_lmax / float(self.lmax))
             ##sigma = np.sqrt(-2. * np.log(self.spec['beam_cross']) / self.lmax / (self.lmax + 1))
-            Cl = self.spec['amplitude'] * np.exp(-0.5 * ls * (ls + 1) * sigma**2)
+            Cl = np.exp(-0.5 * ls * (ls + 1) * sigma**2)
+        elif t == 'none':
+            Cl = None
+            return Cl
 
         cross = self.spec.get('cross', None)
         if cross is None:
@@ -93,9 +97,14 @@ class HarmonicPrior(object):
             amplitude = 1
         else:
             nl = system.ni_approx_by_comp_lst[k]
-            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0][0]
+            
+            l_cross = (nl < nl.max() * self.spec['cross']).nonzero()[0]
+            if len(l_cross):
+                l_cross = l_cross[0]
+            else:
+                l_cross = self.lmax
             amplitude = 1. / nl[l_cross] / Cl[l_cross]
-
+            
         Cl *= amplitude * self.spec.get('relamp', 1)
         return Cl
 
@@ -140,7 +149,7 @@ class CrSystem(object):
         self.rot_ang = rot_ang
         self.flat_mixing = flat_mixing
 
-    def prepare_prior(self, set_wl_dl=True, wl=None):
+    def prepare_prior(self, set_wl_dl=True, wl=None, scale_unity=False):
         self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
         for nu in range(self.band_count):
             for k in range(self.comp_count):
@@ -167,17 +176,22 @@ class CrSystem(object):
             for k in range(self.comp_count):
                 Cl = self.prior_list[k].get_Cl(self, k)
                 self.Cl_list.append(Cl)
-                self.dl_list.append(1. / Cl)
-                self.wl_list.append(np.ones(self.lmax_list[k] + 1))
+                if scale_unity:
+                    assert Cl is not None
+                    self.wl_list.append(np.sqrt(Cl))
+                else:
+                    self.wl_list.append(np.ones(self.lmax_list[k] + 1))
+                self.dl_list.append(1. / Cl if Cl is not None else np.zeros(self.lmax_list[k] + 1))
 
     def set_wl_list(self, wl_list):
         self.wl_list = wl_list
 
-    def prepare(self, use_healpix=False):
+    def prepare(self, use_healpix=False, use_healpix_mixing=False, mixing_nside=None):
         # Make G-L ninv-maps, possibly rotated
         self.ninv_gauss_lst = []
         self.winv_ninv_sh_lst = []
         self.use_healpix = use_healpix
+        self.use_healpix_mixing = use_healpix_mixing
 
         for nu, ninv_map in enumerate(self.ninv_maps):
             winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
@@ -190,49 +204,74 @@ class CrSystem(object):
         # Rescale prior vs. mixing_scalars and mixing_maps_ugrade and mixing_maps to avoid some numerical issues
         # We adjust mixing_scalars in-place. self.mixing_maps is kept as is but all derived quantities
         # computed in this routine are changed
-        ## self.component_scale = np.ones(self.comp_count) # DEBUG
-
-        self.component_scale = np.array([1])#1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
+        self.component_scale = 1. / np.sqrt(np.dot(self.mixing_scalars.T, self.mixing_scalars).diagonal())
+        self.component_scale[:] = 1
 
         self.mixing_scalars *= self.component_scale[None, :]
         for k in range(self.comp_count):
+            print len(self.dl_list)
             self.dl_list[k] *= self.component_scale[k]**2
             self.ni_approx_by_comp_lst[k] *= self.component_scale[k]**2
 
-        # Resample mask to Gauss-Legendre grid
-        if self.mask is not None:
-            mask_lm = sharp.sh_analysis(self.lmax_mixing_pix, self.mask)
-            self.mask_gauss_grid = sharp.sh_synthesis_gauss(self.lmax_mixing_pix, mask_lm)
-            self.mask_gauss_grid[self.mask_gauss_grid < 0.8] = 0
-            self.mask_gauss_grid[self.mask_gauss_grid >= 0.8] = 1
-        else:
-            self.mask_gauss_grid = None
-
         self.mixing_maps_ugrade = {}
-        for nu in range(self.band_count):
-            for k in range(self.comp_count):
-                with timed('mixing'):
-                    self.mixing_maps_ugrade[nu, k] = (
-                        rotate_mixing(self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
-                        * self.component_scale[k])
 
-                    if self.mask_gauss_grid is not None:
-                        self.mixing_maps_ugrade[nu, k] *= self.mask_gauss_grid
-                    
-                    self.mixing_maps[nu, k] *= self.component_scale[k]
-                    if self.flat_mixing:
-                        assert False
-                        self.mixing_maps_ugrade[nu, k][:] = self.mixing_maps_ugrade[nu, k].mean()
+        if self.use_healpix_mixing:
+            from cmbcr.healpix_data import get_ring_weights_T
 
-        self.plan_outer_lst = [
-            sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, lmax)
-            for lmax in self.lmax_list]
-        self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
+            # Downgrade mask
+            self.mask_dg = healpy.ud_grade(self.mask, order_in='RING', order_out='RING', nside_out=mixing_nside, power=0)
+            self.mask_dg[self.mask_dg <= 0.5] = 0
+            self.mask_dg[self.mask_dg != 0] = 1
+            
+            for nu in range(self.band_count):
+                for k in range(self.comp_count):
+
+                    self.mixing_maps_ugrade[nu, k] = healpy.ud_grade(
+                        self.mixing_maps[nu, k],
+                        order_in='RING',
+                        order_out='RING',
+                        nside_out=mixing_nside,
+                        power=0)
+                    self.mixing_maps_ugrade[nu, k] *= self.mask_dg
+
+            weights = get_ring_weights_T(mixing_nside)
+            self.plan_outer_lst = [
+                sharp.RealMmajorHealpixPlan(mixing_nside, lmax, weights=weights)
+                for lmax in self.lmax_list]
+            self.plan_mixed = sharp.RealMmajorHealpixPlan(mixing_nside, self.lmax_mixed, weights=weights)
+        else:
+            # Resample mask to Gauss-Legendre grid
+            if self.mask is not None:
+                mask_lm = sharp.sh_analysis(self.lmax_mixing_pix, self.mask)
+                self.mask_gauss_grid = sharp.sh_synthesis_gauss(self.lmax_mixing_pix, mask_lm)
+                self.mask_gauss_grid[self.mask_gauss_grid < 0.8] = 0
+                self.mask_gauss_grid[self.mask_gauss_grid >= 0.8] = 1
+            else:
+                self.mask_gauss_grid = None
+
+            for nu in range(self.band_count):
+                for k in range(self.comp_count):
+                    with timed('mixing'):
+                        self.mixing_maps_ugrade[nu, k] = (
+                            rotate_mixing(self.lmax_mixing_pix, self.mixing_maps[nu, k], self.rot_ang)
+                            * self.component_scale[k])
+
+                        if self.mask_gauss_grid is not None:
+                            self.mixing_maps_ugrade[nu, k] *= self.mask_gauss_grid
+
+                        self.mixing_maps[nu, k] *= self.component_scale[k]
+                        if self.flat_mixing:
+                            assert False
+                            self.mixing_maps_ugrade[nu, k][:] = self.mixing_maps_ugrade[nu, k].mean()
+
+            self.plan_outer_lst = [
+                sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, lmax)
+                for lmax in self.lmax_list]
+            self.plan_mixed = sharp.RealMmajorGaussPlan(self.lmax_mixing_pix, self.lmax_mixed) # lmax_mixing(pix) -> lmax_mixing(sh)
 
     def matvec(self, x_lst, skip_prior=False):
         assert len(x_lst) == self.comp_count
 
-        nside_mixing = nside_of(self.mixing_maps[0, 0])
         x_pix_lst = [
             plan.synthesis(x_lst[k] * scatter_l_to_lm(self.wl_list[k]))
             for k, plan in enumerate(self.plan_outer_lst)
@@ -311,7 +350,7 @@ class CrSystem(object):
 
 
     @classmethod
-    def from_config(cls, config_doc, rms_treshold=1, mask_eps=0.1, mask=None, udgrade=None):
+    def from_config(cls, config_doc, rms_treshold=0, mask_eps=0.1, mask=None, udgrade=None):
         ninv_maps = []
         bl_list = []
         prior_list = []
@@ -327,7 +366,8 @@ class CrSystem(object):
                 mask = np.zeros(12 * udgrade**2)
                 mask[:] = 1
                 nside = udgrade
-                mask[int(5.5*udgrade**2) - 2*udgrade:int(6.5*udgrade**2)+2*udgrade] = 0
+                mask[int(4*udgrade**2) - 2*udgrade:int(7*udgrade**2)+2*udgrade] = 0
+                #mask[:] = 0
             else:
                 mask = load_map_cached(mask)
                 mask = mask.copy()
@@ -399,6 +439,7 @@ class CrSystem(object):
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
+                    #mixing_maps[nu, k][:] = mixing_maps[nu, k].mean()
 
                 nu += 1
 

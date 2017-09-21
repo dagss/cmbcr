@@ -1,18 +1,16 @@
 
 model:
-  mask: /store/dagss/planckdata/commander_mask_n256_likelihood_v1.fits
   mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
 
   components:
     - name: cmb
-      lmax: 6000
+      lmax: 4000
       mixmat: '06'
       prior:
-        #beta: -2.5
-        #lcross: 3000
         type: file
-        compress: false
+        compress: true
         filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
+        cross: 0.15
 
     - name: dust
       lmax: 6000
@@ -20,15 +18,15 @@ model:
       prior:
         type: power
         beta: -2.5
-        cross: 0.01
+        cross: 0.001
 
     - name: synch
-      lmax: 6000
+      lmax: 1000
       mixmat: '02'
       prior:
         type: gaussian
-        amplitude: 500000
         fwhm: '30 min'
+        cross: 0.15
 
 
 datasets:

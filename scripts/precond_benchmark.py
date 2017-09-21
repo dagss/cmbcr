@@ -18,6 +18,7 @@ reload(cmbcr.precond_diag)
 reload(cmbcr.precond_pixel)
 reload(cmbcr.utils)
 reload(cmbcr.multilevel)
+reload(cmbcr.masked_solver)
 reload(cmbcr)
 from cmbcr.utils import *
 
@@ -34,29 +35,19 @@ config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
 w = 1
 
-nside = 32 * w
+nside = 128 * w
 factor = 2048 // nside * w
+rms_treshold = 1
 
 
-
-full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
+full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8, rms_treshold=rms_treshold)
 
 full_res_system.prepare_prior()
 
 system = cmbcr.downgrade_system(full_res_system, 1. / factor)
 
-#print system.dl_list
-#1/0
-
-#full_res_system.plot(lmax=2000)
-#system.plot(lmax=200)
-#1/0
-
-#print system.lmax_list
-#1/0
 lmax_ninv = 2 * max(system.lmax_list)
 rot_ang = (0, 0, 0)
-#rot_ang = (-1.71526923, -0.97844199, -0.03666168)
 
 system.set_params(
     lmax_ninv=lmax_ninv,
@@ -64,14 +55,13 @@ system.set_params(
     flat_mixing=False,
     )
 
-system.prepare_prior()
-system.prepare(use_healpix=True)
+system.prepare_prior(scale_unity=False)
+system.prepare(use_healpix=True, use_healpix_mixing=True, mixing_nside=nside)
 
-wl_list = [
-    (1 / np.sqrt(system.dl_list[0] + system.ni_approx_by_comp_lst[0]))
-    ]
-system.set_wl_list(wl_list)
-
+if 'plot' in sys.argv:
+    clf()
+    system.plot()
+    1/0
 
 rng = np.random.RandomState(1)
 
@@ -88,8 +78,7 @@ Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
-    scatter_l_to_lm(1. / system.dl_list[k]) *
-    #scatter_l_to_lm(np.sqrt(Cl_cmb[:system.lmax_list[k] + 1])) *
+    #scatter_l_to_lm(1. / system.dl_list[k]) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
     ]
@@ -101,7 +90,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=100):
+    def __init__(self, label, style, preconditioner, n=80):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -121,16 +110,6 @@ class Benchmark(object):
         else:
             start_vec = np.zeros_like(x0_stacked)
 
-        ## if hasattr(self.preconditioner, 'apply_CG_M2'):
-        ##     M2 = lambda x: system.stack(self.preconditioner.apply_CG_M2(system.unstack(x)))
-        ## else:
-        ##     M2 = lambda x: x
-
-        ## if hasattr(self.preconditioner, 'apply_CG_M3'):
-        ##     M3 = lambda x: system.stack(self.preconditioner.apply_CG_M3(system.unstack(x)))
-        ## else:
-        ##     M3 = lambda x: x
-
         solver = cg_generator(
             lambda x: system.stack(system.matvec(system.unstack(x))),
             system.stack(b),
@@ -142,7 +121,7 @@ class Benchmark(object):
         try:
             sharp.sht_count = 0
             for i, (x, r, delta_new) in enumerate(solver):
-                print 'it', i
+                self.x = x
                 if r0 is None:
                     r0 = np.linalg.norm(r)
 
@@ -153,19 +132,21 @@ class Benchmark(object):
                 self.err_vecs.append([x0c - xc for x0c, xc in zip(x0, x)])
                 err = np.linalg.norm(system.stack(x) - x0_stacked) / np.linalg.norm(x0_stacked)
                 self.err_norms.append(err)
+                print 'it', i, err
                 self.sht_counts.append(sharp.sht_count)
                 self.reslst.append(np.linalg.norm(r) / r0)
-                if err < 1e-6 or i >= n:
+                if err < 1e-10 or i >= n:
                     break
         except ValueError as e:
+            raise e
             #if 'positive-definite' in str(e):
             print str(e)
         except AssertionError as e:
+            raise e
             print str(e)
 
             #else:
             #    raise
-
 
 
     def ploterr(self):
@@ -180,37 +161,18 @@ class Benchmark(object):
                 semilogy(cmbcr.norm_by_l(comp) * compscale)
         draw()
 
+def save_benchmarks(benchmarks, filename):
+    import yaml
+    doc = [
+        {
+            'label': b.label,
+            'err': [float(x) for x in b.err_norms],
+            'sht_counts': b.sht_counts
+        }
+        for b in benchmarks]
+    with open(filename, 'w') as f:
+        yaml.dump(doc, f)
 
-
-
-# TODO: Looks like there's a bug in harmonic_preconditioner.f90 or something? The diagonal should
-# look the same regardless of whether we include off-diagonal... perhaps simplify harmonic_preconditioner.f90
-# and the bug will disappear...
-#
-#
-#
-
-#clf()
-#p = cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)
-#semilogy(p.data[0, :])
-
-#p = cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=False)
-#semilogy(p.data[0, :])
-
-#1/0
-
-
-
-#precond = cmbcr.PixelPreconditioner(system)
-#bench = Benchmark(
-#    'Pixel',
-#    '-o',
-#    precond)
-##bench.ploterr()
-
-
-#bench.plotscale()
-#1/0
 
 
 if 0:
@@ -254,7 +216,7 @@ if 'pixmat' in sys.argv:
     1/0
 
 if 'eig' in sys.argv:
-    p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
+    p = cmbcr.PsuedoInversePreconditioner(system)
     A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
     M = hammer(lambda x: system.stack(p.apply(system.unstack(x))), system.x_offsets[-1])
     clf()
@@ -325,80 +287,42 @@ if 'op' in sys.argv:
 #diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
 
 benchmarks = [
+    Benchmark(
+        'Diagonal',
+         '-o',
+        cmbcr.DiagonalPreconditioner2(system),
+        ),
 
     ## Benchmark(
     ##     'Diagonal',
-    ##     '-o',
-    ##     cmbcr.DiagonalPreconditioner(system)),
-
-    ## Benchmark(
-    ##     'Psuedo-inverse ({})'.format('v1'),
-    ##     '-o',
-    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v1'),
-    ## ),
-    ## Benchmark(
-    ##     'Psuedo-inverse (v2)',
-    ##     '-o',
-    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='v2'),
-    ##     ),
-    ## Benchmark(
-    ##     'Psuedo-inverse (bnn)',
-    ##     '-o',
-    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='bnn'),
+    ##      '-o',
+    ##     #cmbcr.BandedHarmonicPreconditioner(system, diagonal=True),
+    ##     #cmbcr.PsuedoInversePreconditioner(system, diagonal=True),
+    ##     cmbcr.DiagonalPreconditioner(system)
     ##     ),
     Benchmark(
-        'Psuedo-inverse (nomask)',
+        'Psuedo-inverse',
         '-o',
-        cmbcr.PsuedoInversePreconditioner(system),
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system),
         ),
-    #Benchmark(
-    #    'Psuedo-inverse (MG)',
-    #    '-o',
-    #    cmbcr.MGPreconditioner(system),
-    #    #cmbcr.PsuedoInverseWithMaskPreconditioner(system, method='add1'),
-    #    ),
     ]
 
-#clf()
-#fig1.clear()
-#fig2.clear()
-#fig3.clear()
 
-#if 'maps' in sys.argv:
-#ma = 100
-#mi = -ma
-#mollview(sharp.sh_synthesis(nside, benchmarks[1].err_vecs[15][0]), fig=fig1.number, min=mi, max=ma)
-#mollview(sharp.sh_synthesis(nside, benchmarks[2].err_vecs[15][0]), fig=fig2.number, min=mi, max=ma)
-#draw()
-#    1/0
+save_benchmarks(benchmarks, '/home/dagss/writing/pseudoinv/results/{}_{}_{}_shtsinv.yaml'.format(sys.argv[1], nside, rms_treshold))
 
-
-## if sys.argv[1] == 'single':
-##     benchmarks.extend([
-##         Benchmark(
-##             'Pixel',
-##             '-o',
-##             cmbcr.PixelPreconditioner(system, prior=False),
-##         ),
-##     ])
-
-#clf()
-#P = benchmarks[-1].preconditioner.P
-#for i in range(P.shape[0]):
-#    plot(P[i, 0, :])
-#draw()
-#1/0
 
 fig3 = gcf()
-clf()
+#clf()
 
 for bench in benchmarks:
     bench.ploterr()
-fig3.gca().set_ylim((1e-6, 1e4))
+fig3.gca().set_ylim((1e-10, 1e4))
 #fig3.gca().set_xlim((0, 800))
 
 legend()
 ion()
+
+
 #fig3.legend()
 #fig1.draw()
 #fig2.draw()

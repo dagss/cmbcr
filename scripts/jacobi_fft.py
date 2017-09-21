@@ -34,10 +34,10 @@ import scipy.ndimage
 
 config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
 
-nside = 1024
+nside = 32
 factor = 2048 // nside
 
-full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8)
+full_res_system = cmbcr.CrSystem.from_config(config, udgrade=nside, mask_eps=0.8, rms_treshold=1)
 
 full_res_system.prepare_prior()
 
@@ -61,7 +61,7 @@ system.prepare(use_healpix=True)
 lmax = system.lmax_list[0]
 
 dl = system.dl_list[0]
-rl = cmbcr.fourth_order_beam(system.lmax_list[0], system.lmax_list[0]//2, 0.2)
+rl = cmbcr.fourth_order_beam(system.lmax_list[0], system.lmax_list[0]//2, 0.1)
 rl = np.sqrt(rl)
 dl_sinv = dl * rl**2
 
@@ -169,22 +169,23 @@ if 'dense' in sys.argv:
     
 def precond_psuedo(b):
     x = precond_1.apply([b])[0]
-    return 0.4 * x
+    return 0.2 * x
     
 def precond_both(b):
-    if 0:
+    if 1:
         r = b
         return precond_1.apply([r])[0] + solve_mask(r)
     else:
         x = np.zeros_like(b)
-        for i in range(1):
+        for i in range(2):
             #r = b - system.matvec([x])[0]
             r = b
             x = precond_psuedo(r)
 
+        r = b - system.matvec([x])[0]
         x += solve_mask(r)
 
-        for i in range(1):
+        for i in range(2):
             r = b - system.matvec([x])[0]
             x += precond_psuedo(r)
 
@@ -228,7 +229,7 @@ for i, (x, r, delta_new) in enumerate(solver):
         semilogy(norm_by_l(x - x0) / norm_by_l(x0))
 
     print 'it', i
-    if i > 10:
+    if i > 100:
         break
 
 def errmap():

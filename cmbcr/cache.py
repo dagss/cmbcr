@@ -12,6 +12,9 @@ memory = joblib.Memory(cachedir='cache')
 
 _cache = {}
 
+#def cached(func, copy=lambda x: x.copy()):
+#    return func
+
 def cached(func, copy=lambda x: x.copy()):
     @wraps(func)
     def replacement(filename):
