@@ -210,7 +210,7 @@ class DiagonalPreconditioner2(object):
     
 
 class PsuedoInverseWithMaskPreconditioner(object):
-    def __init__(self, system, flatsky=False):
+    def __init__(self, system, flatsky=False, inner_its=5):
         if flatsky:
             from .masked_solver_fft import SinvSolver
             mask = system.mask_gauss_grid
@@ -222,9 +222,10 @@ class PsuedoInverseWithMaskPreconditioner(object):
         self.system = system
 
         self.rl_list = [
-            fourth_order_beam(system.lmax_list[k], system.lmax_list[k] // 2, 0.1)
+            fourth_order_beam(system.lmax_list[k], system.lmax_list[k] // 2, 0.05)
             for k in range(system.comp_count)
         ]
+        self.inner_its = inner_its
 
         if self.system.mask is not None:
             self.sinv_solvers = [
@@ -235,7 +236,10 @@ class PsuedoInverseWithMaskPreconditioner(object):
     def solve_component_under_mask(self, k, x):
         sinv_solver = self.sinv_solvers[k]
         x_pix = sinv_solver.restrict(x * scatter_l_to_lm(self.rl_list[k]))
-        x_pix, _, _ = sinv_solver.solve_mask(x_pix, rtol=1e-2, maxit=5)
+        if self.inner_its == 0:
+            x_pix = sinv_solver.precond(x_pix)
+        else:
+            x_pix, _, _ = sinv_solver.solve_mask(x_pix, rtol=1e-2, maxit=self.inner_its)
         x = sinv_solver.prolong(x_pix) * scatter_l_to_lm(self.rl_list[k])
         return x
 

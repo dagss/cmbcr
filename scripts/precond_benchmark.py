@@ -138,11 +138,11 @@ class Benchmark(object):
                 if err < 1e-10 or i >= n:
                     break
         except ValueError as e:
-            raise e
+            raise
             #if 'positive-definite' in str(e):
             print str(e)
         except AssertionError as e:
-            raise e
+            raise
             print str(e)
 
             #else:
@@ -288,27 +288,25 @@ if 'op' in sys.argv:
 
 benchmarks = [
     Benchmark(
-        'Diagonal',
-         '-o',
-        cmbcr.DiagonalPreconditioner2(system),
-        ),
+     'Diagonal',
+      '-o',
+     cmbcr.DiagonalPreconditioner2(system),
+    ),
 
     ## Benchmark(
-    ##     'Diagonal',
-    ##      '-o',
-    ##     #cmbcr.BandedHarmonicPreconditioner(system, diagonal=True),
-    ##     #cmbcr.PsuedoInversePreconditioner(system, diagonal=True),
-    ##     cmbcr.DiagonalPreconditioner(system)
+    ##     'Psuedo-inverse (5 inner its)',
+    ##     '-o',
+    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, inner_its=5),
     ##     ),
     Benchmark(
-        'Psuedo-inverse',
+        'Psuedo-inverse (inner V-cycle)',
         '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system),
+        cmbcr.PsuedoInverseWithMaskPreconditioner(system, inner_its=0),
         ),
     ]
 
 
-save_benchmarks(benchmarks, '/home/dagss/writing/pseudoinv/results/{}_{}_{}_shtsinv.yaml'.format(sys.argv[1], nside, rms_treshold))
+save_benchmarks(benchmarks, '/home/dagss/writing/pseudoinv/results/{}_{}_{}_v4.yaml'.format(sys.argv[1], nside, rms_treshold))
 
 
 fig3 = gcf()

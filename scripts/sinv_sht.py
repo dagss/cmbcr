@@ -35,7 +35,7 @@ from cmbcr.cg import cg_generator
 
 import scipy.ndimage
 
-nside = 64
+nside = 128
 lmax = 3 * nside
 
 
@@ -443,10 +443,6 @@ def v_cycle2(ilevel, levels, smoothers, b):
         next_level = levels[ilevel + 1]
 
 
-        def YTWY(v):
-            ##return v
-            return sharp.sh_analysis(level.lmax, (1 - level.mask) * sharp.sh_synthesis(level.nside, v))
-
         def Yt_h(v):
             return sharp.sh_adjoint_synthesis(level.lmax, level.padvec(v))
 
@@ -473,23 +469,26 @@ def v_cycle2(ilevel, levels, smoothers, b):
         
         def D(v):
             return scatter_l_to_lm(level.dl) * v
-        
-        
-        x = M_b
 
-        r_h = b - Y_h( D( Yt_h(x) ) )
-        r_H = Y_H( R( Ytw_h(r_h) ) )
+        def M(v):
+            return smoothers[ilevel].apply(v)
+
+        def approx_I(v):
+            return v
+            return Ytw_h(Y_h(v))
+        
+        x = M_b.copy()
+
+        x1 = Yt_h(x)
+
+        r_H = Y_H( R( Ytw_h(b) - approx_I( D( x1 ) )) )
 
         c_H = v_cycle2(ilevel + 1, levels, smoothers, r_H)
 
         assert c_H.shape[0] == next_level.n
-        c_h = WY_h ( R ( Yt_H ( c_H ) ) )
-
-        x += c_h
-
-        r_h = b - Y_h( D( Yt_h(x) ) )
-        x += smoothers[ilevel].apply(r_h)
-
+        
+        u = R ( Yt_H ( c_H ) )
+        x += M_b + WY_h ( u ) - M( Y_h( D( x1 + approx_I( u ) ) ))
         
         return x
     

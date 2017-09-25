@@ -8,7 +8,7 @@ model:
 
   components:
     - name: cmb
-      lmax: 8000
+      lmax: 6000
       mixmat: '06'
       prior:
         
