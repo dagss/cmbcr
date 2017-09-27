@@ -47,7 +47,7 @@ full_res_system.prepare_prior()
 system = cmbcr.downgrade_system(full_res_system, 1. / factor)
 
 lmax_ninv = 2 * max(system.lmax_list)
-rot_ang = (0, 0, 0)
+rot_ang = (-1.71526923, -0.97844199, -0.03666168)#(0, 0, 0)
 
 system.set_params(
     lmax_ninv=lmax_ninv,
@@ -56,7 +56,7 @@ system.set_params(
     )
 
 system.prepare_prior(scale_unity=False)
-system.prepare(use_healpix=True, use_healpix_mixing=True, mixing_nside=nside)
+system.prepare(use_healpix=False, use_healpix_mixing=False, mixing_nside=nside)
 
 if 'plot' in sys.argv:
     clf()
@@ -64,17 +64,6 @@ if 'plot' in sys.argv:
     1/0
 
 rng = np.random.RandomState(1)
-
-def load_Cl_cmb(lmax, filename='camb_11229992_scalcls.dat'):
-    #dat = np.loadtxt()
-    dat = np.loadtxt(filename)
-    assert dat[0,0] == 0 and dat[1,0] == 1 and dat[2,0] == 2
-    Cl = dat[:, 1][:lmax + 1]
-    ls = np.arange(2, lmax + 1)
-    Cl[2:] /= ls * (ls + 1) / 2 / np.pi
-    Cl[0] = Cl[1] = Cl[2]
-    return Cl
-Cl_cmb = load_Cl_cmb(10000)
 
 
 x0 = [
@@ -84,9 +73,6 @@ x0 = [
     ]
 b = system.matvec(x0)
 x0_stacked = system.stack(x0)
-
-
-
 
 
 class Benchmark(object):
@@ -284,29 +270,29 @@ if 'op' in sys.argv:
         doit(6*nside**2 + 2 * nside + t * 4 * nside)
     1/0
 
-#diag_precond_nocouplings = cmbcr.BandedHarmonicPreconditioner(system, diagonal=True, couplings=False)
 
 benchmarks = [
+    ## Benchmark(
+    ##  'Diagonal',
+    ##   '-o',
+    ##  cmbcr.DiagonalPreconditioner2(system),
+    ## ),
+
     Benchmark(
-     'Diagonal',
+      'Banded',
       '-o',
-     cmbcr.DiagonalPreconditioner2(system),
+      cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)
     ),
 
     ## Benchmark(
-    ##     'Psuedo-inverse (5 inner its)',
+    ##     'Pseudo-inverse (inner V-cycle)',
     ##     '-o',
-    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, inner_its=5),
+    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, inner_its=0),
     ##     ),
-    Benchmark(
-        'Psuedo-inverse (inner V-cycle)',
-        '-o',
-        cmbcr.PsuedoInverseWithMaskPreconditioner(system, inner_its=0),
-        ),
     ]
 
 
-save_benchmarks(benchmarks, '/home/dagss/writing/pseudoinv/results/{}_{}_{}_v4.yaml'.format(sys.argv[1], nside, rms_treshold))
+save_benchmarks(benchmarks, '/home/dagss/writing/pseudoinv/results/{}_{}_{}_banded.yaml'.format(sys.argv[1], nside, rms_treshold))
 
 
 fig3 = gcf()

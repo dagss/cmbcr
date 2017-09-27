@@ -280,8 +280,8 @@ contains
 
                          val = mblock(fac * (j + 2 * delta) + neg, fac * j + neg, k_kp_idx(k, kp))
 
-                         val = val * bl(l + odd) * bl(l + odd + 2 * delta) * dl(l + odd, k) * dl(l + odd, kp)
-                         !if (delta == 0 .and. k == kp) val = val + dl(l + odd, k)
+                         val = val * bl(l + odd) * bl(l + odd + 2 * delta)
+                         if (delta == 0 .and. k == kp) val = val + dl(l + odd, k)
                          out(iband, block_col * ncomp + (kp - 1)) = &
                               out(iband, block_col * ncomp + (kp - 1)) + real(val, kind=sp)
                       end do

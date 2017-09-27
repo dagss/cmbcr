@@ -20,7 +20,7 @@ def compute_banded_preconditioner(self, couplings, diagonal, factor):
 
     dl = np.zeros((lmax + 1, system.comp_count), order='F')
     for k in range(system.comp_count):
-        dl[:, k] += pad_or_trunc(1. / np.sqrt(system.dl_list[k]), lmax + 1)
+        dl[:, k] += pad_or_trunc(system.dl_list[k], lmax + 1)
 
     for nu in range(system.band_count):
 

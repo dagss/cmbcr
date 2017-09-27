@@ -72,14 +72,6 @@ class HarmonicPrior(object):
                 Cl = Cl_func(np.linspace(0, self.fullres_lmax, self.lmax + 1))
             else:
                 Cl = Cl[:self.lmax + 1]
-
-            ## ni = system.ni_approx_by_comp_lst[k][self.spec['cross']]
-            ## if ni == 0:
-            ##     # mask-only; doesn't matter what the amplitude is
-            ##     amplitude = 1
-            ## else:
-            ##     amplitude = 1. / (ni * Cl[self.spec['cross']])
-            ## Cl *= amplitude
         elif t == 'gaussian':
             ls = np.arange(self.lmax + 1)
             sigma = fwhm_to_sigma(self.spec['fwhm'])
@@ -155,9 +147,6 @@ class CrSystem(object):
             for k in range(self.comp_count):
                 q = self.mixing_maps[nu, k]
                 self.mixing_scalars[nu, k] = (q[q != 0]).mean()
-                #self.mixing_scalars[nu, k] = (q**2).sum() / q.sum()
-        #print self.mixing_scalars
-
 
         # Estimates of Ni level for prior construction in demos; *note* that we *include* component_scale
         # here...
@@ -219,10 +208,11 @@ class CrSystem(object):
             from cmbcr.healpix_data import get_ring_weights_T
 
             # Downgrade mask
-            self.mask_dg = healpy.ud_grade(self.mask, order_in='RING', order_out='RING', nside_out=mixing_nside, power=0)
-            self.mask_dg[self.mask_dg <= 0.5] = 0
-            self.mask_dg[self.mask_dg != 0] = 1
-            
+            if self.mask:
+                self.mask_dg = healpy.ud_grade(self.mask, order_in='RING', order_out='RING', nside_out=mixing_nside, power=0)
+                self.mask_dg[self.mask_dg <= 0.5] = 0
+                self.mask_dg[self.mask_dg != 0] = 1
+
             for nu in range(self.band_count):
                 for k in range(self.comp_count):
 
@@ -232,6 +222,7 @@ class CrSystem(object):
                         order_out='RING',
                         nside_out=mixing_nside,
                         power=0)
+                if self.mask:
                     self.mixing_maps_ugrade[nu, k] *= self.mask_dg
 
             weights = get_ring_weights_T(mixing_nside)
@@ -362,31 +353,12 @@ class CrSystem(object):
 
 
         if mask:
-            if 0:
-                mask = np.zeros(12 * udgrade**2)
-                mask[:] = 1
-                nside = udgrade
-                mask[int(4*udgrade**2) - 2*udgrade:int(7*udgrade**2)+2*udgrade] = 0
-                #mask[:] = 0
-            else:
-                mask = load_map_cached(mask)
-                mask = mask.copy()
-                #mask[:] = 1
-                #nside = nside_of(mask)
-                #mask[6*nside**2:12*nside**2] = 0
+            mask = load_map_cached(mask)
+            mask = mask.copy()
         else:
             mask = None
         
         
-        ## if mask:
-        ##     mask = load_map_cached(mask)
-        ##     mask = mask.copy()
-        ##     mask[:] = 1
-        ##     nside = nside_of(mask)
-        ##     mask[6*nside**2:12*nside**2] = 0
-        ## else:
-        ##     mask = None
-
         nu = 0
         for dataset in config_doc['datasets']:
             path = dataset['path']
@@ -402,8 +374,6 @@ class CrSystem(object):
 
                 rms = load_map_cached(rms_filename)
                 rms = rms.copy()
-                ##print 'WARNING: mean rms'
-                ##rms[:] = rms.mean() ## DEBUG
 
                 if udgrade is not None:
                     rms = healpy.ud_grade(rms, order_in='RING', order_out='RING', nside_out=udgrade, power=1)
@@ -412,34 +382,11 @@ class CrSystem(object):
                 rms[rms < alpha] = alpha
                 ninv_map = 1 / rms**2
 
-
-                # Include the mask only in mixing maps, not ninv-map..
-                
-                # We don't deal with the mask before precompute, because if the system is downscaled
-                # we want to
-                ##nside = nside_of(ninv_map)
-
-                ## if mask is not None and False:
-                ##     # First, udgrade the mask to same resolution as ninv_map. Then, extend it with one beam-size.
-                ##     mask_ud = healpy.ud_grade(mask, nside, order_in='RING', order_out='RING', power=0)
-                ##     mask_ud[mask_ud != 0] = 1
-
-                ##     #mask_lm = sharp.sh_analysis(3 * nside, mask_ud)
-                ##     #from .beams import gaussian_beam_by_l
-                ##     #mask_lm *= scatter_l_to_lm(gaussian_beam_by_l(3 * nside, '4 deg'))
-                ##     #mask_ext = sharp.sh_synthesis(nside, mask_lm)
-
-                ##     #healpy.mollzoom(mask_ext - mask_ud)
-                ##     #1/0
-
-                ##     ninv_map *= mask_ud
-
                 ninv_maps.append(ninv_map)
 
                 for k, component in enumerate(config_doc['model']['components']):
                     mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
                     mixing_maps[nu, k] = mixing_maps[nu, k].copy()
-                    #mixing_maps[nu, k][:] = mixing_maps[nu, k].mean()
 
                 nu += 1
 
@@ -458,39 +405,6 @@ class CrSystem(object):
             plt.semilogy(self.wl_list[k]**2 / self.Cl_list[k][:L + 1] * scale, color=colors[k])
             plt.semilogy(self.wl_list[k]**2 * self.ni_approx_by_comp_lst[k][:L + 1] * scale, linestyle='dotted', color=colors[k])
         plt.draw()
-
-
-def restrict_system(system):
-    """
-    Create a new system that has half the resolution.
-    """
-    lmax_list_dg = [L // 2 for L in system.lmax_list]
-
-    wl_list_dg = []
-    dl_list_dg = []
-    rl_list = []
-    
-    for k in range(system.comp_count):
-        # make restriction rl such that rl=0.1 (i.e., rl**2=0.01) at L
-        L = lmax_list_dg[k]
-        ls = np.arange(L + 1, dtype=np.double)
-        sigma_sq = -2. * np.log(0.1) / L / (L + 1)
-        rl = np.exp(0.5 * ls * (ls + 1) * sigma_sq)
-
-        # update and truncate wl_list and dl_list
-        wl_list_dg.append(system.wl_list[k][:L + 1] * rl)
-        dl_list_dg.append(system.dl_list[k][:L + 1] * rl**2)
-        rl_list.append(rl)
-
-    system_dg = system.copy_with()
-    system_dg.lmax_list = lmax_list_dg
-    system_dg.wl_list = wl_list_dg
-    system_dg.dl_list = dl_list_dg
-    system_dg.rl_list = rl_list
-    system_dg.set_params(system.lmax_ninv, system.rot_ang, system.flat_mixing)
-    system_dg.prepare_prior(set_wl_dl=False)
-    system_dg.prepare(use_healpix=True)
-    return system_dg
         
 
 def downgrade_system(system, fraction):
