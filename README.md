@@ -41,7 +41,10 @@ make
 
 ## Copyright & license
 
-The cmbcr code is Copyright 2017 Dag Sverre Seljebotn
+NOTE: cmbcr/rotate_alm.f90 is copied from the HEALPix library
+and is Copyright (C) 1997-2016  HEALPix collaboration
+
+The remainder of the code is Copyright 2017 Dag Sverre Seljebotn
 
 Since this code depends on code from Libsharp and HEALPix, which are
 both under the GPLv2, this code is also licensed under GPLv2 (or any
