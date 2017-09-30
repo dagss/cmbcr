@@ -6,6 +6,9 @@ besides the developers. The Commander code (https://github.com/hke/commander)
 contains another implementation of some of these algorithms, for use in a
 production analysis.
 
+That said the code is made available so that one may verify the claims made
+in arxiv:TODO.
+
 After building the code as described below, one may run
 
 PYTHONPATH=. python scripts/precond_benchmark.py input/mask.yaml 64
@@ -18,8 +21,10 @@ run the preconditioners.
 
 ## Setup
 
-cmbcr depends on Libsharp and OpenBLAS. See the config subdirectory and create
-a configuration that matches your system. Then:
+cmbcr depends on Libsharp, OpenBLAS, Cython, Python, NumPy, SciPy,
+healpy, matplotlib, joblib, and possible other Python libraries. See
+the confi subdirectory and create a configuration that matches your
+system. Then:
 
 ```
 make CONFIG=yourconfig
