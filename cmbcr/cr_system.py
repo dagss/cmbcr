@@ -208,7 +208,7 @@ class CrSystem(object):
             from cmbcr.healpix_data import get_ring_weights_T
 
             # Downgrade mask
-            if self.mask:
+            if self.mask is not None:
                 self.mask_dg = healpy.ud_grade(self.mask, order_in='RING', order_out='RING', nside_out=mixing_nside, power=0)
                 self.mask_dg[self.mask_dg <= 0.5] = 0
                 self.mask_dg[self.mask_dg != 0] = 1
@@ -222,7 +222,7 @@ class CrSystem(object):
                         order_out='RING',
                         nside_out=mixing_nside,
                         power=0)
-                if self.mask:
+                if self.mask is not None:
                     self.mixing_maps_ugrade[nu, k] *= self.mask_dg
 
             weights = get_ring_weights_T(mixing_nside)

@@ -13,7 +13,7 @@ CC ?= gcc
 CYTHON ?= cython
 
 
-FORTRAN_CYTHON_MODULES = cmbcr/harmonic_preconditioner.so cmbcr/rotate_alm.so cmbcr/block_matrix.so cmbcr/sympix_mg.so cmbcr/precond_psuedoinv_mod.so
+FORTRAN_CYTHON_MODULES = cmbcr/harmonic_preconditioner.so cmbcr/rotate_alm.so cmbcr/block_matrix.so cmbcr/sympix_mg.so cmbcr/precond_pseudoinv_mod.so
 CYTHON_MODULES = cmbcr/mmajor.so cmbcr/mblocks.so cmbcr/sharp.so cmbcr/healpix.so
 FORTRAN_MODULES = build/src/types_as_c.mod build/src/constants.mod
 

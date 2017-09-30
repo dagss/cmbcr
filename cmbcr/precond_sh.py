@@ -31,6 +31,8 @@ def compute_banded_preconditioner(self, couplings, diagonal, factor):
         ninv_phase, thetas = gauss_ring_map_to_phase_map(system.ninv_gauss_lst[nu], system.lmax_ninv, lmax)
         for k in range(system.comp_count):
             for kp in range(k + 1):
+                # Note: couplings doesn't quite work, not sure why, but for now run this without couplings,
+                # there may be a bug...
                 if couplings or k == kp:
                     ninv_phase_maps[:, :, k_kp_idx(k, kp)] = (
                         ninv_phase * system.mixing_scalars[nu, k] * system.mixing_scalars[nu, kp])

@@ -1,4 +1,4 @@
-module precond_psuedoinv_mod
+module precond_pseudoinv_mod
   use iso_c_binding
   use types_as_c
   use constants
@@ -95,4 +95,4 @@ contains
   end subroutine compsep_apply_U_block_diagonal
 
 
-end module precond_psuedoinv_mod
+end module precond_pseudoinv_mod

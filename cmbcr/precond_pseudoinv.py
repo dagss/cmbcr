@@ -5,7 +5,7 @@ from .mmajor import scatter_l_to_lm
 from .mblocks import gauss_ring_map_to_phase_map
 from . import sharp, beams
 from cmbcr.healpix import nside_of
-from .precond_psuedoinv_mod import compsep_apply_U_block_diagonal, compsep_assemble_U
+from .precond_pseudoinv_mod import compsep_apply_U_block_diagonal, compsep_assemble_U
 from .beams import fourth_order_beam
 from .block_matrix import block_diagonal_factor, block_diagonal_solve
 
@@ -85,7 +85,7 @@ def lstsub(a, b):
 
 
 
-class PsuedoInversePreconditioner(object):
+class PseudoInversePreconditioner(object):
 
     def __init__(self, system):
         self.system = system
@@ -209,16 +209,9 @@ class DiagonalPreconditioner2(object):
         
     
 
-class PsuedoInverseWithMaskPreconditioner(object):
+class PseudoInverseWithMaskPreconditioner(object):
     def __init__(self, system, flatsky=False, inner_its=5):
-        if flatsky:
-            from .masked_solver_fft import SinvSolver
-            mask = system.mask_gauss_grid
-        else:
-            from .masked_solver import SinvSolver
-            mask = system.mask_dg
-
-        self.psuedo_inv = PsuedoInversePreconditioner(system)
+        self.pseudo_inv = PseudoInversePreconditioner(system)
         self.system = system
 
         self.rl_list = [
@@ -228,6 +221,12 @@ class PsuedoInverseWithMaskPreconditioner(object):
         self.inner_its = inner_its
 
         if self.system.mask is not None:
+            if flatsky:
+                from .masked_solver_fft import SinvSolver
+                mask = system.mask_gauss_grid
+            else:
+                from .masked_solver import SinvSolver
+                mask = system.mask_dg
             self.sinv_solvers = [
                 SinvSolver(system.dl_list[k] * self.rl_list[k]**2, mask)
                 for k in range(self.system.comp_count)
@@ -244,7 +243,7 @@ class PsuedoInverseWithMaskPreconditioner(object):
         return x
 
     def apply(self, b_lst):
-        x = self.psuedo_inv.apply(b_lst)
+        x = self.pseudo_inv.apply(b_lst)
         if self.system.mask is not None:
             x_under_mask = [
                 self.solve_component_under_mask(k, b_lst[k])

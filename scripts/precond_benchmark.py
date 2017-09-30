@@ -1,4 +1,11 @@
 from __future__ import division
+
+"""
+Benchmark script. Usage:
+
+scripts/precond_benchmark.py input_file downgrade_resolution
+"""
+
 import numpy as np
 
 from matplotlib.pyplot import *
@@ -13,11 +20,10 @@ import cmbcr.utils
 reload(cmbcr.beams)
 reload(cmbcr.cr_system)
 reload(cmbcr.precond_sh)
-reload(cmbcr.precond_psuedoinv)
+reload(cmbcr.precond_pseudoinv)
 reload(cmbcr.precond_diag)
 reload(cmbcr.precond_pixel)
 reload(cmbcr.utils)
-reload(cmbcr.multilevel)
 reload(cmbcr.masked_solver)
 reload(cmbcr)
 from cmbcr.utils import *
@@ -25,18 +31,13 @@ from cmbcr.utils import *
 from cmbcr import sharp
 from healpy import mollzoom, mollview
 
-#reload(cmbcr.main)
-
 import sys
 from cmbcr.cg import cg_generator
 
-config = cmbcr.load_config_file('input/{}.yaml'.format(sys.argv[1]))
+config = cmbcr.load_config_file(sys.argv[1])
 
-
-w = 1
-
-nside = 128 * w
-factor = 2048 // nside * w
+nside = int(sys.argv[2])
+factor = 2048 // nside
 rms_treshold = 1
 
 
@@ -47,7 +48,7 @@ full_res_system.prepare_prior()
 system = cmbcr.downgrade_system(full_res_system, 1. / factor)
 
 lmax_ninv = 2 * max(system.lmax_list)
-rot_ang = (-1.71526923, -0.97844199, -0.03666168)#(0, 0, 0)
+rot_ang = (0, 0, 0)
 
 system.set_params(
     lmax_ninv=lmax_ninv,
@@ -56,18 +57,11 @@ system.set_params(
     )
 
 system.prepare_prior(scale_unity=False)
-system.prepare(use_healpix=False, use_healpix_mixing=False, mixing_nside=nside)
-
-if 'plot' in sys.argv:
-    clf()
-    system.plot()
-    1/0
+system.prepare(use_healpix=True, use_healpix_mixing=True, mixing_nside=nside)
 
 rng = np.random.RandomState(1)
 
-
 x0 = [
-    #scatter_l_to_lm(1. / system.dl_list[k]) *
     rng.normal(size=(system.lmax_list[k] + 1)**2).astype(np.float64)
     for k in range(system.comp_count)
     ]
@@ -76,7 +70,7 @@ x0_stacked = system.stack(x0)
 
 
 class Benchmark(object):
-    def __init__(self, label, style, preconditioner, n=80):
+    def __init__(self, label, style, preconditioner, n=100):
         self.label = label
         self.style = style
         self.preconditioner = preconditioner
@@ -112,8 +106,6 @@ class Benchmark(object):
                     r0 = np.linalg.norm(r)
 
                 x = system.unstack(x)
-                ##if hasattr(self.preconditioner, 'v_end'):
-                ##    x = self.preconditioner.v_end(b, x)
 
                 self.err_vecs.append([x0c - xc for x0c, xc in zip(x0, x)])
                 err = np.linalg.norm(system.stack(x) - x0_stacked) / np.linalg.norm(x0_stacked)
@@ -125,19 +117,12 @@ class Benchmark(object):
                     break
         except ValueError as e:
             raise
-            #if 'positive-definite' in str(e):
-            print str(e)
         except AssertionError as e:
             raise
             print str(e)
 
-            #else:
-            #    raise
-
-
     def ploterr(self):
-        fig3.gca().semilogy(self.err_norms, self.style, label=self.label)
-        #fig3.gca().semilogy(self.sht_counts, self.err_norms, self.style, label=self.label)
+        fig.gca().semilogy(self.err_norms, self.style, label=self.label)
 
     def plotscale(self):
         clf()
@@ -160,154 +145,29 @@ def save_benchmarks(benchmarks, filename):
         yaml.dump(doc, f)
 
 
-
-if 0:
-    clf()
-    for i in range(system.band_count):
-        alpha = 1
-        def op(x):
-            u = system.plan_ninv.synthesis(x)
-            u *= system.ninv_gauss_lst[i] * alpha
-            u = system.plan_ninv.adjoint_synthesis(u)
-            return u
-
-        Ni = hammer(op, (31 + 1)**2)
-
-        plot(Ni.diagonal())
-    draw()
-
-    1/0
-
-
-if 'plot' in sys.argv:
-    clf()
-    system.plot()
-    1/0
-
-if 'pixmat' in sys.argv:
-    pdia = cmbcr.DiagonalPreconditioner(system)
-    #1/0
-    s = np.sqrt(pdia.M_lst[0])
-    def op(u):
-        alm = sharp.sh_analysis(system.lmax_list[0], u) * s
-        alm = system.matvec([alm])[0]
-        return sharp.sh_adjoint_analysis(nside, alm * s)
-    A = hammer(op, 12 * nside**2)
-    s = 1 / np.sqrt(A.diagonal())
-    A *= s[:, None]
-    A *= s[None, :]
-    clf()
-    imshow(A, interpolation='none')
-    draw()
-    1/0
-
-if 'eig' in sys.argv:
-    p = cmbcr.PsuedoInversePreconditioner(system)
-    A = hammer(lambda x: system.stack(system.matvec(system.unstack(x))), system.x_offsets[-1])
-    M = hammer(lambda x: system.stack(p.apply(system.unstack(x))), system.x_offsets[-1])
-    clf()
-    from scipy.linalg import eigvalsh, eigvals
-    semilogy(np.abs(eigvalsh(A)), '-', label='A')
-    semilogy(np.abs(eigvalsh(M))[::-1], '-', label='M')
-    semilogy(sorted(np.abs(eigvals(np.dot(M, A)))), '-', label='MA^-1')
-    gca().set_ylim((1e-5, 1e8))
-    legend()
-    draw()
-    1/0
-
-if 'op' in sys.argv:
-    #p = cmbcr.PsuedoInversePreconditioner(system)
-
-    method = 'v2'
-
-    p = cmbcr.PsuedoInverseWithMaskPreconditioner(system, method=method)
-
-    from cmbcr import beams
-    lmax = system.lmax_list[0]
-    #sl = 1 / beams.gaussian_beam_by_l(lmax, '30 deg')
-    sl = np.ones(lmax + 1)
-    slm = scatter_l_to_lm(sl)
-
-    def op(f, i):
-        u = np.zeros(12*nside**2)
-        u[i] = 1
-        #return u + 1e-1
-        alm = sharp.sh_analysis(system.lmax_list[0], u) * slm
-        #alm = system.matvec([alm])[0]
-        alm = f([alm])[0]
-        return sharp.sh_adjoint_analysis(nside, alm * slm)
-
-    #clf()
-    #plot(op(system.matvec, 8*nside**2))
-    #draw()
-    #1/0
-
-    def doit(i):
-        clf()
-        u = op(p.apply, i)
-        #u = np.log10(np.abs(u))
-        mollview(u, fig=gcf().number, sub=211)
-
-        def q(x):
-            if unity:
-                x = [x[0] * scatter_l_to_lm(1 / system.wl_list[0])]
-                x = system.matvec(x)
-                x = [x[0] * scatter_l_to_lm(1 / system.wl_list[0])]
-                return x
-            else:
-                x = system.matvec(x)
-            return x
-
-        u = op(q, i)
-        #u = np.log10(np.abs(u))
-        mollview(u, fig=gcf().number, sub=212)
-        draw()
-
-    t = 10
-    if 'up' in sys.argv:
-        doit(6*nside**2 + 2 * nside - t * 4 * nside)
-    else:
-        doit(6*nside**2 + 2 * nside + t * 4 * nside)
-    1/0
-
-
 benchmarks = [
-    ## Benchmark(
-    ##  'Diagonal',
-    ##   '-o',
-    ##  cmbcr.DiagonalPreconditioner2(system),
-    ## ),
-
     Benchmark(
-      'Banded',
+     'Fullsky diagonal',
       '-o',
-      cmbcr.BandedHarmonicPreconditioner(system, diagonal=False, couplings=True)
+     cmbcr.DiagonalPreconditioner2(system),
     ),
 
-    ## Benchmark(
-    ##     'Pseudo-inverse (inner V-cycle)',
-    ##     '-o',
-    ##     cmbcr.PsuedoInverseWithMaskPreconditioner(system, inner_its=0),
-    ##     ),
+    Benchmark(
+      'Fullsky pseudo-inverse',
+      '-o',
+      cmbcr.PseudoInverseWithMaskPreconditioner(system, inner_its=0),
+     ),
     ]
 
 
-save_benchmarks(benchmarks, '/home/dagss/writing/pseudoinv/results/{}_{}_{}_banded.yaml'.format(sys.argv[1], nside, rms_treshold))
+##save_benchmarks(benchmarks, sys.argv[2], nside, rms_treshold))
 
 
-fig3 = gcf()
-#clf()
+fig = gcf()
 
 for bench in benchmarks:
     bench.ploterr()
-fig3.gca().set_ylim((1e-10, 1e4))
-#fig3.gca().set_xlim((0, 800))
+fig.gca().set_ylim((1e-10, 1e4))
 
 legend()
-ion()
-
-
-#fig3.legend()
-#fig1.draw()
-#fig2.draw()
-#fig3.draw()
+show()
