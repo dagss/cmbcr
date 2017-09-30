@@ -6,10 +6,6 @@ besides the developers. The Commander code (https://github.com/hke/commander)
 contains another implementation of some of these algorithms, for use in a
 production analysis.
 
-That said the code is made available so that it is possible to verify
-the claims made in the paper arxiv:TODO. It is also most useful for reading,
-not so much for execution.
-
 After building the code as described below, one may run
 
 PYTHONPATH=. python scripts/precond_benchmark.py input/mask.yaml 64
