@@ -13,7 +13,7 @@ from .mmajor import scatter_l_to_lm
 from . import sharp
 from .utils import timed, pad_or_truncate_alm
 from .healpix import nside_of
-from .beams import fwhm_to_sigma
+from .beams import fwhm_to_sigma, gaussian_beam_by_l
 
 __all__ = ['CrSystem', 'downgrade_system']
 
@@ -385,8 +385,17 @@ class CrSystem(object):
                 ninv_maps.append(ninv_map)
 
                 for k, component in enumerate(config_doc['model']['components']):
-                    mixing_maps[nu, k] = load_map_cached(mixing_maps_template.format(band=band, component=component))
-                    mixing_maps[nu, k] = mixing_maps[nu, k].copy()
+                    cached_map = load_map_cached(mixing_maps_template.format(band=band, component=component))
+
+                    mixing_smooth_fwhm = config_doc['model'].get('mixing_smooth', None)
+                    if mixing_smooth_fwhm is not None:
+                        nside_mix = nside_of(cached_map)
+                        lmax_mix = 3 * nside_mix
+                        alm = sharp.sh_analysis(lmax_mix, cached_map)
+                        alm *= scatter_l_to_lm(gaussian_beam_by_l(lmax_mix, mixing_smooth_fwhm))
+                        mixing_maps[nu, k] = sharp.sh_synthesis(nside_mix, alm)
+                    else:
+                        mixing_maps[nu, k] = cached_map
 
                 nu += 1
 
