@@ -1,7 +1,8 @@
 
 model:
-  #mask: /home/dagss/astro/cmbcr/mask_2048.fits
-  mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
+  mask: /home/dagss/astro/cmbcr/mask_2048.fits
+  #mask: /home/dagss/astro/cmbcr/mask_galactic_band_2048.fits
+  
   
   mixing_maps_template: /store/dagss/planck/mixmat_{component[name]}_{band[name]}_c0001_k999999.fits
   #mixing_smooth: '1 deg'
@@ -12,15 +13,15 @@ model:
       lmax: 6000
       prior:
         
-        #type: file
-        #compress: true
-        #filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
+        type: file
+        compress: true
+        filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
+        cross: 0.08
+
+
+        #type: power
+        #beta: -1.5
         #cross: 0.1
-
-
-        type: power
-        beta: -1.5
-        cross: 0.1
 
 datasets:
   - name: planck_lfi

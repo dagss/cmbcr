@@ -1,20 +1,18 @@
 
 model:
-  mixing_maps_template: /store/dagss/planckdata/32band/mixmat_comp{component[mixmat]}_band{band[mixmat]}_chain01_k00001.fits
+  mixing_maps_template: /store/dagss/planck/mixmat_{component[name]}_{band[name]}_c0001_k999999.fits
 
   components:
     - name: cmb
       lmax: 4000
-      mixmat: '06'
       prior:
         type: file
-        compress: true
+        compress: false #true
         filename: /home/dagss/astro/cmbcr/camb_11229992_scalcls.dat
-        cross: 0.15
+        #cross: 0.15
 
     - name: dust
       lmax: 6000
-      mixmat: '01'
       prior:
         type: power
         beta: -2.5
@@ -22,7 +20,6 @@ model:
 
     - name: synch
       lmax: 1000
-      mixmat: '02'
       prior:
         type: gaussian
         fwhm: '30 min'
@@ -31,45 +28,25 @@ model:
 
 datasets:
   - name: planck_hfi
-    path: /store/dagss/planckdata/32band
-    map_template: map_dx11d_r2t_zc_{band[name]}_2048_fullres_full.fits
-    rms_template: rms_dx11d_r2t_{band[name]}_2048_fullres_full.fits
-    beam_template: beam_dx11d2_uni_{band[name]}_x_{band[name]}.fits
+    path: /store/dagss/planck
+
+    rms_template: rms_rd12_rc4_{band[name]}GHz_ful.all_ful.fits
+    beam_template: beam_dx12v2_{band[name]}x{band[name]}_extended.fits
 
     bands:
-
-      - name: '857-2'
-        mixmat: '01'
-        
-      - name: '545-2'
-        mixmat: '02'
-        
-      - name: '353-2'
-        mixmat: '05'
-        
-      - name: '217-4'
-        mixmat: '09'
-        
-      - name: '143-ds1'
-        mixmat: '10'
-        
-      - name: '100-ds1'
-        mixmat: '16'
-
+      - name: '100'
+      - name: '143'
+      - name: '217'
+      - name: '353'
+      - name: '857'
 
   - name: planck_lfi
-    path: /store/dagss/planckdata/32band
-    map_template: map_dx11d_r2t_zc_{band[name]}_1024_fullres_full.fits
-    rms_template: rms_dx11d_r2t_{band[name]}_1024_fullres_full.fits
-    beam_template: beam_dx11d2_uni_{band[name]}.fits
+    path: /store/dagss/planck
+
+    rms_template: rms_dx12_r3_{band[name]}_full_res_n1024.fits
+    beam_template: bl_{band[name]}_TT_extended.fits
 
     bands:
       - name: '030'
-        mixmat: '17'
-
       - name: '044'
-        mixmat: '18'
-
-      - name: '070-18_23'
-        mixmat: '19'
-
+      - name: '070'

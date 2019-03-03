@@ -20,17 +20,19 @@ __all__ = ['CrSystem', 'downgrade_system']
 load_map_cached = cached(lambda filename: load_map('raw', filename))
 load_beam_cached = cached(load_beam)
 
-@memory.cache
 def rotate_ninv(lmax_ninv, ninv_map, rot_ang):
-    winv_ninv_sh = sharp.sh_adjoint_synthesis(lmax_ninv, ninv_map)
-    if rot_ang != (0, 0, 0):
-        rotate_alm(lmax_ninv, winv_ninv_sh, *rot_ang)
-    plan_dg = sharp.RealMmajorGaussPlan(lmax_ninv, lmax_ninv)
-    ninv_gauss = plan_dg.adjoint_analysis(winv_ninv_sh)
-    return winv_ninv_sh, ninv_gauss
+    with timed('rotate_ninv'):
+        with timed('winv adjoint_syntesis'):
+            winv_ninv_sh = sharp.sh_adjoint_synthesis(lmax_ninv, ninv_map)
+        if rot_ang != (0, 0, 0):
+            rotate_alm(lmax_ninv, winv_ninv_sh, *rot_ang)
+        plan_dg = sharp.RealMmajorGaussPlan(lmax_ninv, lmax_ninv)
+        with timed('ninv_gauss adjoint_analysis'):
+            ninv_gauss = plan_dg.adjoint_analysis(winv_ninv_sh)
+        return winv_ninv_sh, ninv_gauss
 
-@memory.cache
 def rotate_mixing(lmax_pix, mixing_map, rot_ang):
+    1/0
     mixing_map_sh = sharp.sh_analysis(lmax_pix, mixing_map)
     if rot_ang != (0, 0, 0):
         rotate_alm(lmax_pix, mixing_map_sh, *rot_ang)
@@ -96,6 +98,7 @@ class HarmonicPrior(object):
             else:
                 l_cross = self.lmax
             amplitude = 1. / nl[l_cross] / Cl[l_cross]
+            print 'Adjusting Cl by ', amplitude
             
         Cl *= amplitude * self.spec.get('relamp', 1)
         return Cl
@@ -134,12 +137,13 @@ class CrSystem(object):
         self_kw.update(**kw)
         return CrSystem(**self_kw)
 
-    def set_params(self, lmax_ninv, rot_ang, flat_mixing):
+    def set_params(self, lmax_ninv, rot_ang, flat_mixing, use_mixing_mask):
         self.lmax_mixed = max(self.lmax_list)
         self.lmax_ninv = lmax_ninv
         self.lmax_mixing_pix = self.lmax_mixed #lmax_ninv
         self.rot_ang = rot_ang
         self.flat_mixing = flat_mixing
+        self.use_mixing_mask = use_mixing_mask
 
     def prepare_prior(self, set_wl_dl=True, wl=None, scale_unity=False):
         self.mixing_scalars = np.zeros((self.band_count, self.comp_count))
@@ -162,6 +166,7 @@ class CrSystem(object):
             self.dl_list = []
             self.wl_list = []
             self.Cl_list = []
+            
             for k in range(self.comp_count):
                 Cl = self.prior_list[k].get_Cl(self, k)
                 self.Cl_list.append(Cl)
@@ -182,10 +187,13 @@ class CrSystem(object):
         self.use_healpix = use_healpix
         self.use_healpix_mixing = use_healpix_mixing
 
-        for nu, ninv_map in enumerate(self.ninv_maps):
-            winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
-            self.winv_ninv_sh_lst.append(winv_ninv_sh)
-            self.ninv_gauss_lst.append(ninv_gauss)
+        if 0:
+        # this stuff is needed for diagonal preconditioner
+            for nu, ninv_map in enumerate(self.ninv_maps):
+                winv_ninv_sh, ninv_gauss = rotate_ninv(self.lmax_ninv, ninv_map, self.rot_ang)
+                self.winv_ninv_sh_lst.append(winv_ninv_sh)
+                self.ninv_gauss_lst.append(ninv_gauss)
+                pass
 
         if not self.use_healpix:
             self.plan_ninv = sharp.RealMmajorGaussPlan(self.lmax_ninv, self.lmax_mixed)
@@ -198,7 +206,6 @@ class CrSystem(object):
 
         self.mixing_scalars *= self.component_scale[None, :]
         for k in range(self.comp_count):
-            print len(self.dl_list)
             self.dl_list[k] *= self.component_scale[k]**2
             self.ni_approx_by_comp_lst[k] *= self.component_scale[k]**2
 
@@ -207,13 +214,43 @@ class CrSystem(object):
         if self.use_healpix_mixing:
             from cmbcr.healpix_data import get_ring_weights_T
 
-            # Downgrade mask
+            self.mask_dg_map = {} # nside : mask
+            
+            # Downgrade mask used for region partitioning in preconditioner
             if self.mask is not None:
                 self.mask_dg = healpy.ud_grade(self.mask, order_in='RING', order_out='RING', nside_out=mixing_nside, power=0)
-                self.mask_dg[self.mask_dg <= 0.5] = 0
-                self.mask_dg[self.mask_dg != 0] = 1
+                ##self.mask_dg[self.mask_dg <= 0.5] = 0
+                ##self.mask_dg[self.mask_dg != 0] = 1
 
+                if 0:
+                    # Apodize mask
+                    alm = sharp.sh_analysis(3 * mixing_nside, self.mask_dg)
+                    alm *= scatter_l_to_lm(gaussian_beam_by_l(3 * mixing_nside, '6 deg'))
+                    self.mask_dg = sharp.sh_synthesis(mixing_nside, alm)
+                    self.mask_dg[self.mask_dg > 0.8] = 1
+                    self.mask_dg[self.mask_dg < 0.2] = 0
+                else:
+                    self.mask_dg[self.mask_dg <= 0.5] = 0
+                    self.mask_dg[self.mask_dg != 0] = 1
+                    
+
+                
+
+                
             for nu in range(self.band_count):
+                # masks used in matvec 
+                nside = nside_of(self.ninv_maps[nu])
+                if nside not in self.mask_dg_map:
+                    if self.mask is not None:
+                        assert nside_of(self.mask_dg) == nside
+                        m = self.mask_dg
+                        ##m = healpy.ud_grade(self.mask, order_in='RING', order_out='RING', nside_out=nside, power=0)
+                        ##m[self.mask_dg <= 0.5] = 0
+                        ##m[self.mask_dg != 0] = 1
+                        self.mask_dg_map[nside] = m
+                    else:
+                        self.mask_dg_map[nside] = np.ones(12*nside**2)                        
+
                 for k in range(self.comp_count):
 
                     self.mixing_maps_ugrade[nu, k] = healpy.ud_grade(
@@ -222,7 +259,8 @@ class CrSystem(object):
                         order_out='RING',
                         nside_out=mixing_nside,
                         power=0)
-                if self.mask is not None:
+
+                if self.mask is not None and self.use_mixing_mask:
                     self.mixing_maps_ugrade[nu, k] *= self.mask_dg
 
             weights = get_ring_weights_T(mixing_nside)
@@ -262,6 +300,8 @@ class CrSystem(object):
 
     def matvec(self, x_lst, skip_prior=False):
         assert len(x_lst) == self.comp_count
+        if self.flat_mixing:
+            return self.matvec_scalar_mixing(x_lst)
 
         x_pix_lst = [
             plan.synthesis(x_lst[k] * scatter_l_to_lm(self.wl_list[k]))
@@ -282,8 +322,12 @@ class CrSystem(object):
             if self.use_healpix:
                 u = sharp.sh_synthesis(nside_of(self.ninv_maps[nu]), y)
                 u *= self.ninv_maps[nu]
+                # mask mul
+                if not self.use_mixing_mask:
+                    u *= self.mask_dg_map[nside_of(u)]
                 y = sharp.sh_adjoint_synthesis(self.lmax_mixed, u)
             else:
+                1/0
                 # gauss-legendre mode
                 u = self.plan_ninv.synthesis(y)
                 u *= self.ninv_gauss_lst[nu]
@@ -293,7 +337,7 @@ class CrSystem(object):
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
             y = self.plan_mixed.adjoint_analysis(y)
             for k in range(self.comp_count):
-                u = y * self.mixing_maps_ugrade[nu, k]
+                u = y * self.mixing_scalars[nu, k] * self.mixing_maps_ugrade[nu, k]
                 z_pix_lst[k] += u
 
         z_lst = [
@@ -311,6 +355,9 @@ class CrSystem(object):
     def matvec_scalar_mixing(self, x_lst):
         assert len(x_lst) == self.comp_count
         z_lst = [0] * self.comp_count
+        if not self.use_mixing_mask and not self.use_healpix:
+            print "ERROR: MASK WILL NOT BE APPLIED AS SCALAR MIXING IS TURNED ON..."
+            1/0
 
         for nu in range(self.band_count):
             # Mix components together
@@ -323,8 +370,11 @@ class CrSystem(object):
             if self.use_healpix:
                 u = sharp.sh_synthesis(nside_of(self.ninv_maps[nu]), y)
                 u *= self.ninv_maps[nu]
+                if not self.use_mixing_mask:
+                    u *= self.mask_dg_map[nside_of(u)]
                 y = sharp.sh_adjoint_synthesis(self.lmax_mixed, u)
             else:
+                1/0
                 # gauss-legendre mode
                 u = self.plan_ninv.synthesis(y)
                 u *= self.ninv_gauss_lst[nu]
@@ -333,7 +383,7 @@ class CrSystem(object):
             # note that z_list will get result from all bands
             y *= scatter_l_to_lm(self.bl_list[nu][:self.lmax_mixed + 1])
             for k in range(self.comp_count):
-                z_lst[k] = pad_or_truncate_alm(y, self.lmax_list[k]) * self.mixing_scalars[nu, k]
+                z_lst[k] = z_lst[k] + pad_or_truncate_alm(y, self.lmax_list[k]) * self.mixing_scalars[nu, k]
 
         for k in range(self.comp_count):
             z_lst[k] += scatter_l_to_lm(self.dl_list[k]) * x_lst[k]
@@ -365,7 +415,7 @@ class CrSystem(object):
 
             for band in dataset['bands']:
                 assert isinstance(band['name'], basestring), 'You need to surround band names with quotes'
-                map_filename = os.path.join(path, dataset['map_template'].format(band=band))
+                ##map_filename = os.path.join(path, dataset['map_template'].format(band=band))
                 rms_filename = os.path.join(path, dataset['rms_template'].format(band=band))
                 beam_filename = os.path.join(path, dataset['beam_template'].format(band=band))
 
@@ -388,14 +438,16 @@ class CrSystem(object):
                     cached_map = load_map_cached(mixing_maps_template.format(band=band, component=component))
 
                     mixing_smooth_fwhm = config_doc['model'].get('mixing_smooth', None)
-                    if mixing_smooth_fwhm is not None:
+                    
+                    if 1==0 and mixing_smooth_fwhm is not None:
                         nside_mix = nside_of(cached_map)
                         lmax_mix = 3 * nside_mix
                         alm = sharp.sh_analysis(lmax_mix, cached_map)
                         alm *= scatter_l_to_lm(gaussian_beam_by_l(lmax_mix, mixing_smooth_fwhm))
                         mixing_maps[nu, k] = sharp.sh_synthesis(nside_mix, alm)
                     else:
-                        mixing_maps[nu, k] = cached_map
+                        mixing_maps[nu, k] = cached_map.copy()
+                        #mixing_maps[nu, k][:] = cached_map.mean()
 
                 nu += 1
 

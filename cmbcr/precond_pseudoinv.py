@@ -24,7 +24,7 @@ def apply_block_diagonal_pinv(system, blocks, x):
 
     for i in range(system.band_count + system.comp_count):
         pad_x[:, i] = pad_or_truncate_alm(x[i], lmax)
-
+ 
     compsep_apply_U_block_diagonal(lmax, blocks, pad_x, transpose=True)
 
     result = []
@@ -99,20 +99,37 @@ class PseudoInversePreconditioner(object):
         self.alpha_lst = []
         for nu in range(system.band_count):
             # ninv_gauss has *W* included in it. To normalize it we want a map without the weights..
-            p = sharp.RealMmajorGaussPlan(system.lmax_ninv, system.lmax_ninv)
-            ninv_gauss_no_w = p.synthesis(system.winv_ninv_sh_lst[nu])
+            ##p = sharp.RealMmajorGaussPlan(system.lmax_ninv, system.lmax_ninv)
+            ##ninv_gauss_no_w = p.synthesis(system.winv_ninv_sh_lst[nu])
             # did some experimentation and indeed 1.0 is the optimal value below, just to verify the intuition;
             # when plotted this makes the diagonal of Y^T N^{-1} Y not center on 1, but I suppose that "power"
             # is in the rest of the matrix
             ##q = ninv_gauss_no_w[ninv_gauss_no_w > ninv_gauss_no_w.max() * 7e-4]
-            alpha = np.sqrt((ninv_gauss_no_w**2).sum() / ninv_gauss_no_w.sum())
+            
+            ##alpha = np.sqrt((ninv_gauss_no_w**2).sum() / ninv_gauss_no_w.sum())
+
+            tau = system.ninv_maps[nu] / (4 * np.pi / system.ninv_maps[nu].shape[0])
+            alpha = np.sqrt((tau**2).sum() / tau.sum())
+            
             self.alpha_lst.append(1 * alpha)
 
         self.U = create_mixing_matrix(system, lmax, self.alpha_lst)
         self.Uplus = pinv_block_diagonal(self.U)
 
         def make_inv_map(x):
-            return 1 / x
+            import healpy
+            mask = system.mask_dg_map[nside_of(x)]
+            
+            m = 1. / x
+            #m *= mask
+
+            # blue: remove inside mask
+            # orange: full-sky
+            
+            
+            m[mask == 0] *= 10
+            
+            return m
 
         if self.system.use_healpix:
             self.inv_inv_maps = [make_inv_map(x) for x in system.ninv_maps]
@@ -148,6 +165,7 @@ class DiagonalPreconditioner2(object):
     def __init__(self, system):
         from .precond_diag import compute_Yh_D_Y_diagonal
         from .mblocks import gauss_ring_map_to_phase_map
+        from commander.compute.cr.sh_integrals import compute_approximate_Yt_D_Y_diagonal_mblock, compute_approximate_Yt_D_Y_diagonal
 
         self.system = system
 
@@ -157,9 +175,21 @@ class DiagonalPreconditioner2(object):
         
         Ni_diag_lst = []
         for nu in range(self.system.band_count):
-            print 'compute_Yh_D_Y_diagonal for ', nu
-            ninv_phase, thetas = gauss_ring_map_to_phase_map(system.ninv_gauss_lst[nu], system.lmax_ninv, lmax)
-            Ni_diag_lst.append(compute_Yh_D_Y_diagonal(lmax, ninv_phase, thetas))
+
+            if 1:
+                nside = nside_of(system.ninv_maps[nu])
+                lmax_drc3jj = 3 * nside
+                with timed('map2alm'):
+                    alm = sharp.sh_analysis(2 * lmax_drc3jj, system.ninv_maps[nu] * system.mask_dg_map[nside])
+                Ni_diag = np.zeros((lmax_drc3jj + 1)**2, dtype=np.double)
+                with timed('compute_Yh_D_Y_diagonal(drc3jj) for {}'.format(nu)):
+                    Ni_diag = compute_approximate_Yt_D_Y_diagonal(12*nside**2, 0, lmax_drc3jj, alm, out=Ni_diag)
+                    #compute_approximate_Yt_D_Y_diagonal_mblock(12*nside**2, 0, lmax_drc3jj, 0, lmax_drc3jj, alm, out=Ni_diag)
+            else:
+                with timed('compute_Yh_D_Y_diagonal for {}'.format(nu)):
+                    ninv_phase, thetas = gauss_ring_map_to_phase_map(system.ninv_gauss_lst[nu], system.lmax_ninv, lmax)
+                    Ni_diag = compute_Yh_D_Y_diagonal(lmax, ninv_phase, thetas)
+            Ni_diag_lst.append(Ni_diag)
 
         blocks = np.zeros((self.system.comp_count, self.system.comp_count, (lmax + 1)**2), order='F')
         idx = 0
