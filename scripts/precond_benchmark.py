@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 import cmbcr
 import cmbcr.utils
+reload(cmbcr.sht)
 reload(cmbcr.beams)
 reload(cmbcr.cr_system)
 reload(cmbcr.precond_sh)
@@ -57,13 +58,8 @@ system.set_params(
     lmax_ninv=lmax_ninv,
     rot_ang=rot_ang,
 
-# setup1 : flat mixing without mixing mask
-    flat_mixing=True,
-    use_mixing_mask=False,##DONOTCHANGE
-
-# setup2: 
-##    flat_mixing=False,
-##    use_mixing_mask=True,
+    flat_mixing=False 
+    use_mixing_mask=False, # do not change
     )
 
 system.prepare_prior(scale_unity=False)
@@ -114,7 +110,7 @@ x0 = [
 ##x0[0][:] = 0
 ##x0[0][4] = 1
     
-b = system.matvec([x0[0].copy()])
+b = system.matvec(x0)
 x0_stacked = system.stack(x0)
 
 ##bx = sharp.sh_synthesis(nside, b[0].copy())
@@ -217,14 +213,14 @@ benchmarks = [
 #      '-o',
 #     cmbcr.DiagonalPreconditioner2(system),
 #    ),
-#    Benchmark(
-#     'diag-1',
-#   '-o',
-#     cmbcr.DiagonalPreconditioner2(system),
-#    ),
+    Benchmark(
+     'diag-1',
+   '-o',
+     cmbcr.DiagonalPreconditioner2(system),
+    ),
 #    Benchmark(
 #     'Fullsky diagonal 2',
-#      '-o',
+#     '-o',
 #     cmbcr.DiagonalPreconditioner2(system),
 #    ),
 

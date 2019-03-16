@@ -5,7 +5,7 @@ import scipy
 import healpy
 
 from .beams import standard_needlet_by_l, fourth_order_beam, gaussian_beam_by_l
-from . import sharp
+from . import sht
 from .cg import cg_generator
 from .utils import scatter_l_to_lm, hammer, pad_or_truncate_alm
 from .cache import memory
@@ -61,26 +61,26 @@ def v_cycle_combined_shts(ilevel, levels, smoothers, b):
 
 
         def Yt_h(v):
-            return sharp.sh_adjoint_synthesis(level.lmax, level.padvec(v))
+            return sht.sh_adjoint_synthesis(level.lmax, level.padvec(v))
 
         def Ytw_h(v):
             # use lmax_restrict as the output is passed to R
-            return sharp.sh_analysis(lmax_restrict, level.padvec(v))
+            return sht.sh_analysis(lmax_restrict, level.padvec(v))
         
         def WY_h(v):
-            return level.pickvec(sharp.sh_adjoint_analysis(level.nside, v))
+            return level.pickvec(sht.sh_adjoint_analysis(level.nside, v))
 
         def Ytw_H(v):
-            return sharp.sh_analysis(level.lmax, next_level.padvec(v))
+            return sht.sh_analysis(level.lmax, next_level.padvec(v))
         
         def Yt_H(v):
-            return sharp.sh_adjoint_synthesis(lmax_restrict, next_level.padvec(v))
+            return sht.sh_adjoint_synthesis(lmax_restrict, next_level.padvec(v))
         
         def Y_H(v):
-            return next_level.pickvec(sharp.sh_synthesis(next_level.nside, v))
+            return next_level.pickvec(sht.sh_synthesis(next_level.nside, v))
         
         def Y_h(v):
-            return level.pickvec(sharp.sh_synthesis(level.nside, v))
+            return level.pickvec(sht.sh_synthesis(level.nside, v))
 
         def R(v):
             v = pad_or_truncate_alm(v, lmax_restrict)
@@ -141,10 +141,10 @@ class SinvSolver(object):
         self.n = int((self.mask == 0).sum())
 
     def restrict(self, u):
-        return self.pickvec(sharp.sh_synthesis(self.nside, u))
+        return self.pickvec(sht.sh_synthesis(self.nside, u))
 
     def prolong(self, u):
-        return sharp.sh_adjoint_synthesis(self.lmax, self.padvec(u))
+        return sht.sh_adjoint_synthesis(self.lmax, self.padvec(u))
             
     def pickvec(self, u):
         return self.levels[0].pickvec(u)
@@ -226,9 +226,9 @@ class Level(object):
         return u_pad
 
     def matvec_padded(self, u):
-        u = sharp.sh_adjoint_synthesis(self.lmax, u)
+        u = sht.sh_adjoint_synthesis(self.lmax, u)
         u *= scatter_l_to_lm(self.dl)
-        u = sharp.sh_synthesis(self.nside, u)
+        u = sht.sh_synthesis(self.nside, u)
         return u
 
     def matvec(self, u):
@@ -240,16 +240,16 @@ class Level(object):
 
     def coarsen_padded(self, u):
         lmax_restrict = self.lmax // 2
-        alm = sharp.sh_analysis(lmax_restrict, u)
+        alm = sht.sh_analysis(lmax_restrict, u)
         alm *= scatter_l_to_lm(self.restrict_l[:lmax_restrict + 1])
-        u = sharp.sh_synthesis(self.nside // 2, alm)
+        u = sht.sh_synthesis(self.nside // 2, alm)
         return u
 
     def interpolate_padded(self, u):
         lmax_restrict = self.lmax // 2
-        alm = sharp.sh_adjoint_synthesis(lmax_restrict, u)
+        alm = sht.sh_adjoint_synthesis(lmax_restrict, u)
         alm *= scatter_l_to_lm(self.restrict_l[:lmax_restrict + 1])
-        u = sharp.sh_adjoint_analysis(self.nside, alm)
+        u = sht.sh_adjoint_analysis(self.nside, alm)
         return u
 
 
@@ -276,8 +276,8 @@ class DenseSmoother(object):
 def operator_image_to_power_spectrum(lmax, unitvec, opimage):
     # unitvec: unit-vector in flatsky basis
     # x: image of operator
-    YtW_x = sharp.sh_analysis(lmax, opimage)
-    Yt_u = sharp.sh_adjoint_synthesis(lmax, unitvec)
+    YtW_x = sht.sh_analysis(lmax, opimage)
+    Yt_u = sht.sh_adjoint_synthesis(lmax, unitvec)
     return YtW_x[:lmax + 1] / Yt_u[:lmax + 1]
 
 
@@ -289,8 +289,8 @@ def coarsen_level(level):
         unitvec[6 * nside_H**2 + 2 * nside_H] = 1
 
         image_of_operator = level.matvec_coarsened(unitvec)
-        YtW_x = sharp.sh_analysis(level.lmax, image_of_operator)
-        Yt_u = sharp.sh_adjoint_synthesis(level.lmax, unitvec)
+        YtW_x = sht.sh_analysis(level.lmax, image_of_operator)
+        Yt_u = sht.sh_adjoint_synthesis(level.lmax, unitvec)
         dl_H = operator_image_to_power_spectrum(level.lmax // 2, unitvec, image_of_operator)
     else:
         dl_H = (level.restrict_l**2 * level.dl)[:level.lmax // 2 + 1]

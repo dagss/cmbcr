@@ -8,6 +8,7 @@ from cmbcr.healpix import nside_of
 from .precond_pseudoinv_mod import compsep_apply_U_block_diagonal, compsep_assemble_U
 from .beams import fourth_order_beam
 from .block_matrix import block_diagonal_factor, block_diagonal_solve
+from . import sht
 
 
 def pinv_block_diagonal(blocks):
@@ -150,9 +151,9 @@ class PseudoInversePreconditioner(object):
         u *= self.alpha_lst[nu]
         if self.system.use_healpix:
             n_map = self.inv_inv_maps[nu]
-            u = sharp.sh_adjoint_analysis(nside_of(n_map), u)
+            u = sht.sh_adjoint_analysis(nside_of(n_map), u)
             u *= n_map
-            u = sharp.sh_analysis(self.lmax, u)
+            u = sht.sh_analysis(self.lmax, u)
         else:
             u = self.plan.adjoint_analysis(u)
             u *= self.inv_inv_maps[nu]
